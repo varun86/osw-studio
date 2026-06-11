@@ -6,7 +6,7 @@
  * Privacy Features:
  * - No cookies
  * - IP anonymization (country-level only)
- * - Session ID from anonymized fingerprint
+ * - Session ID via crypto.randomUUID() with sessionStorage persistence
  * - No cross-site tracking
  *
  * Tracked Metrics:
@@ -82,31 +82,41 @@ export function generateTrackingScript(options: TrackingScriptOptions): string {
   var eventQueue = [];
   var lastFlush = Date.now();
 
-  // Generate anonymous session ID from browser fingerprint (no cookies)
+  // Generate anonymous session ID using crypto.randomUUID() (no cookies)
+  // Uses a per-session UUID stored in sessionStorage for consistency within a visit.
+  // Falls back to a timestamp-based ID if crypto API is unavailable.
+  var SESSION_STORAGE_KEY = 'osw_analytics_sid';
+
   function generateSessionId() {
-    var canvas = document.createElement('canvas');
-    var ctx = canvas.getContext('2d');
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('osw', 0, 0);
-    var canvasData = canvas.toDataURL();
-
-    var fingerprint = [
-      navigator.userAgent,
-      navigator.language,
-      screen.colorDepth,
-      screen.width + 'x' + screen.height,
-      new Date().getTimezoneOffset(),
-      canvasData.slice(0, 100)
-    ].join('|');
-
-    var hash = 0;
-    for (var i = 0; i < fingerprint.length; i++) {
-      var char = fingerprint.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
+    // Try to reuse existing session ID from sessionStorage
+    try {
+      var existingId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      if (existingId) return existingId;
+    } catch (e) {
+      // sessionStorage may be unavailable (e.g. private browsing in some browsers)
     }
-    return Math.abs(hash).toString(36);
+
+    // Generate a new session ID using crypto.randomUUID()
+    var newId;
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      newId = crypto.randomUUID();
+    } else {
+      // Fallback for environments without crypto.randomUUID()
+      newId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0;
+        var v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    // Store in sessionStorage so the same session ID is used across page views
+    try {
+      sessionStorage.setItem(SESSION_STORAGE_KEY, newId);
+    } catch (e) {
+      // Ignore storage errors
+    }
+
+    return newId;
   }
 
   // Detect device type

@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     // Origin validation is stronger for same-origin hosting and avoids token expiration issues.
     // Additional protection provided by: rate limiting, bot detection, and anomaly detection.
 
-    // Generate session ID from user agent + anonymized IP
+    // Generate session ID using crypto.randomUUID()
     const sessionId = generateSessionId(userAgent, request);
 
     // Extract country from IP (anonymized - no storing IP addresses)
@@ -178,26 +178,11 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Generate anonymous session ID from user agent and IP
- * No cookies, no personal data - just a hash for unique visitor counting
+ * Generate anonymous session ID using crypto.randomUUID()
+ * No cookies, no personal data - just a unique identifier per session
  */
-function generateSessionId(userAgent: string, request: NextRequest): string {
-  // Get anonymized IP (only first 2 octets for IPv4, first 4 groups for IPv6)
-  const forwarded = request.headers.get('x-forwarded-for');
-  const ip = forwarded ? forwarded.split(',')[0] : '';
-  const anonymizedIP = anonymizeIP(ip);
-
-  const fingerprint = `${userAgent}|${anonymizedIP}|${new Date().toDateString()}`;
-
-  // Simple hash
-  let hash = 0;
-  for (let i = 0; i < fingerprint.length; i++) {
-    const char = fingerprint.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-
-  return Math.abs(hash).toString(36);
+function generateSessionId(_userAgent: string, _request: NextRequest): string {
+  return crypto.randomUUID();
 }
 
 /**

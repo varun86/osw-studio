@@ -71,8 +71,9 @@ export function ModelSelector({ provider, value: _value, onChange, className, hi
       setLoading(true);
       
       const apiKey = configManager.getProviderApiKey(currentProvider);
+      const hasApiKey = configManager.hasProviderApiKey(currentProvider);
       
-      if (providerConfig.apiKeyRequired && !apiKey) {
+      if (providerConfig.apiKeyRequired && !hasApiKey) {
         setNeedsApiKey(true);
         if (providerConfig.models) {
           setModels(providerConfig.models);

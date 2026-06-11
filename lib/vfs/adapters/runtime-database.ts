@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { VirtualFile, FileTreeNode, Deployment, EdgeFunction, FunctionLog, TableInfo, ServerFunction, Secret, ScheduledFunction } from '../types';
 import { encryptSecret, isEncryptionConfigured } from '../../edge-functions/secrets-crypto';
 import { getRuntimeDatabaseConnection, closeRuntimeDatabase } from './sqlite-connection';
+import { validateRuntimeSQL, splitSQLStatements, MAX_RESULT_ROWS } from '@/lib/db/sql-validator';
 
 /**
  * Helper to ensure a value is a Date and convert to ISO string
@@ -193,6 +194,7 @@ export class RuntimeDatabase {
         encrypted_value TEXT NOT NULL,
         iv TEXT NOT NULL,
         auth_tag TEXT NOT NULL,
+        key_version TEXT,
         description TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -226,7 +228,24 @@ export class RuntimeDatabase {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_functions_name ON scheduled_functions(name)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_functions_next_run ON scheduled_functions(next_run_at)`);
 
+    // Schema migrations for existing databases
+    this.runMigrations();
+
     this.initialized = true;
+  }
+
+  /**
+   * Run schema migrations for existing databases that may be missing newer columns.
+   * Uses ALTER TABLE ... ADD COLUMN with IF NOT EXISTS semantics (SQLite ignores
+   * duplicate column errors when wrapped in try/catch).
+   */
+  private runMigrations(): void {
+    // Migration 1: Add key_version column to secrets table (for key rotation)
+    try {
+      this.db.exec(`ALTER TABLE secrets ADD COLUMN key_version TEXT`);
+    } catch {
+      // Column already exists — ignore
+    }
   }
 
   /**
@@ -786,9 +805,9 @@ export class RuntimeDatabase {
     const encrypted = encryptSecret(value);
 
     this.db.prepare(`
-      INSERT INTO secrets (id, name, encrypted_value, iv, auth_tag, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, encrypted.encryptedValue, encrypted.iv, encrypted.authTag, description || null, now, now);
+      INSERT INTO secrets (id, name, encrypted_value, iv, auth_tag, key_version, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, encrypted.encryptedValue, encrypted.iv, encrypted.authTag, encrypted.keyVersion || null, description || null, now, now);
 
     return id;
   }
@@ -815,9 +834,9 @@ export class RuntimeDatabase {
 
     this.db.prepare(`
       UPDATE secrets
-      SET encrypted_value = ?, iv = ?, auth_tag = ?, updated_at = ?
+      SET encrypted_value = ?, iv = ?, auth_tag = ?, key_version = ?, updated_at = ?
       WHERE id = ?
-    `).run(encrypted.encryptedValue, encrypted.iv, encrypted.authTag, now, id);
+    `).run(encrypted.encryptedValue, encrypted.iv, encrypted.authTag, encrypted.keyVersion || null, now, id);
   }
 
   updateSecretMetadata(id: string, updates: { name?: string; description?: string }): void {
@@ -848,13 +867,15 @@ export class RuntimeDatabase {
     encryptedValue: string;
     iv: string;
     authTag: string;
+    keyVersion?: string;
   }> {
-    const rows = this.db.prepare('SELECT name, encrypted_value, iv, auth_tag FROM secrets').all() as Record<string, unknown>[];
+    const rows = this.db.prepare('SELECT name, encrypted_value, iv, auth_tag, key_version FROM secrets').all() as Record<string, unknown>[];
     return rows.map(row => ({
       name: row.name as string,
       encryptedValue: row.encrypted_value as string,
       iv: row.iv as string,
       authTag: row.auth_tag as string,
+      keyVersion: (row.key_version as string) || undefined,
     }));
   }
 
@@ -1000,7 +1021,27 @@ export class RuntimeDatabase {
   // ============================================
 
   executeDDL(sql: string): void {
-    this.db.exec(sql);
+    // 1. Split the SQL into individual statements using the centralized splitter
+    const statements = splitSQLStatements(sql);
+    if (statements.length === 0) {
+      throw new Error('RuntimeDB.executeDDL: Empty SQL query');
+    }
+
+    // 2. Validate each statement individually through the centralized validator
+    //    This prevents injecting unvalidated SQL by hiding it after a semicolon
+    const validatedStatements: string[] = [];
+    for (const stmt of statements) {
+      const validation = validateRuntimeSQL(stmt, { allowDDL: true, context: 'RuntimeDB.executeDDL' });
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+      validatedStatements.push(stmt);
+    }
+
+    // 3. Execute each validated statement individually
+    for (const stmt of validatedStatements) {
+      this.db.exec(stmt);
+    }
   }
 
   // ============================================
@@ -1018,20 +1059,19 @@ export class RuntimeDatabase {
     'scheduled_functions',
   ];
 
-  private static readonly BLOCKED_PATTERNS = /^\s*(ATTACH|DETACH|PRAGMA|VACUUM)\b/i;
-
   executeRawSQL(sql: string, params?: unknown[]): {
     columns: string[];
     rows: unknown[][];
     rowsAffected: number;
   } {
-    if (RuntimeDatabase.BLOCKED_PATTERNS.test(sql)) {
-      throw new Error('Statement type not allowed');
+    // Use centralized validator (replaces weak BLOCKED_PATTERNS regex)
+    const validation = validateRuntimeSQL(sql, { context: 'RuntimeDB.executeRawSQL' });
+    if (!validation.valid) {
+      throw new Error(validation.error);
     }
 
     const trimmedSql = sql.trim().toLowerCase();
-
-    const isSelect = trimmedSql.startsWith('select');
+    const isSelect = validation.statementType === 'SELECT';
 
     if (isSelect) {
       const stmt = this.db.prepare(sql);
@@ -1041,8 +1081,10 @@ export class RuntimeDatabase {
         return { columns: [], rows: [], rowsAffected: 0 };
       }
 
+      // Enforce row limit to prevent memory exhaustion
+      const limitedRows = (rows as unknown[]).slice(0, MAX_RESULT_ROWS);
       const columns = Object.keys(rows[0] as Record<string, unknown>);
-      const rowsArray = rows.map(row => columns.map(col => (row as Record<string, unknown>)[col]));
+      const rowsArray = limitedRows.map(row => columns.map(col => (row as Record<string, unknown>)[col]));
 
       return { columns, rows: rowsArray, rowsAffected: 0 };
     } else {
@@ -1136,16 +1178,16 @@ export class RuntimeDatabase {
     rowsAffected: number;
     error?: string;
   } {
-    const trimmedSql = sql.trim();
-    const upperSql = trimmedSql.toUpperCase();
-
-    const systemTableError = this.validateNotSystemTable(upperSql);
-    if (systemTableError) {
+    // Use centralized validator (replaces weak validateNotSystemTable regex)
+    // This catches CTEs, subqueries, JOINs, and multi-table references
+    // that the old regex-based approach missed
+    const validation = validateRuntimeSQL(sql, { context: 'RuntimeDB.executeUserQuery' });
+    if (!validation.valid) {
       return {
         columns: [],
         rows: [],
         rowsAffected: 0,
-        error: systemTableError,
+        error: validation.error,
       };
     }
 
@@ -1162,39 +1204,16 @@ export class RuntimeDatabase {
     }
   }
 
+  /**
+   * @deprecated Use validateRuntimeSQL from @/lib/db/sql-validator instead.
+   * Kept for backward compatibility but now delegates to the centralized validator.
+   */
   private validateNotSystemTable(upperSql: string): string | null {
-    const ddlMatch = upperSql.match(/^(DROP|ALTER|TRUNCATE)\s+TABLE\s+(?:IF\s+EXISTS\s+)?["'`]?(\w+)["'`]?/i);
-    if (ddlMatch) {
-      const tableName = ddlMatch[2].toLowerCase();
-      if (RuntimeDatabase.SYSTEM_TABLES.includes(tableName)) {
-        return `Cannot modify system table: ${tableName}`;
-      }
+    // Delegate to centralized validator for consistency
+    const validation = validateRuntimeSQL(upperSql, { context: 'RuntimeDB.validateNotSystemTable' });
+    if (!validation.valid) {
+      return validation.error ?? 'System table access denied';
     }
-
-    const insertMatch = upperSql.match(/^INSERT\s+INTO\s+["'`]?(\w+)["'`]?/i);
-    if (insertMatch) {
-      const tableName = insertMatch[1].toLowerCase();
-      if (RuntimeDatabase.SYSTEM_TABLES.includes(tableName)) {
-        return `Cannot insert into system table: ${tableName}`;
-      }
-    }
-
-    const updateMatch = upperSql.match(/^UPDATE\s+["'`]?(\w+)["'`]?/i);
-    if (updateMatch) {
-      const tableName = updateMatch[1].toLowerCase();
-      if (RuntimeDatabase.SYSTEM_TABLES.includes(tableName)) {
-        return `Cannot update system table: ${tableName}`;
-      }
-    }
-
-    const deleteMatch = upperSql.match(/^DELETE\s+FROM\s+["'`]?(\w+)["'`]?/i);
-    if (deleteMatch) {
-      const tableName = deleteMatch[1].toLowerCase();
-      if (RuntimeDatabase.SYSTEM_TABLES.includes(tableName)) {
-        return `Cannot delete from system table: ${tableName}`;
-      }
-    }
-
     return null;
   }
 

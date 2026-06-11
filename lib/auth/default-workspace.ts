@@ -24,12 +24,13 @@ import {
   updateWorkspace,
 } from './system-database';
 import { hashPassword } from './passwords';
+import { applyEncryptionKey } from './db-crypto';
 import { logger } from '@/lib/utils';
 
 function openReadonlyDb(dbPath: string): Database.Database {
   const db = new Database(dbPath, { readonly: true });
-  const key = process.env.DB_ENCRYPTION_KEY;
-  if (key) db.pragma(`key='${key}'`);
+  // SECURITY: Apply encryption key with validation to prevent SQL injection
+  applyEncryptionKey(db, process.env.DB_ENCRYPTION_KEY, 'DB_ENCRYPTION_KEY');
   return db;
 }
 

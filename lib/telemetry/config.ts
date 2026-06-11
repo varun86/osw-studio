@@ -1,8 +1,27 @@
+/**
+ * Telemetry Configuration
+ *
+ * SECURITY: The telemetry token must be provided via the NEXT_PUBLIC_ANALYTICS_TOKEN
+ * environment variable. There is NO hardcoded fallback token.
+ *
+ * If the token is not set, telemetry will still function but without
+ * authentication headers — the receiving endpoint should reject
+ * unauthenticated requests in production.
+ */
+
 export const TELEMETRY_ENDPOINT =
   process.env.NEXT_PUBLIC_ANALYTICS_ENDPOINT || 'https://stats.oswstudio.com/collect';
 
-export const TELEMETRY_TOKEN =
-  process.env.NEXT_PUBLIC_ANALYTICS_TOKEN || 'gcBLEeGjdx8gbUMoAAlksvoKSREZlJ4l+GwKieTW2Og=';
+/**
+ * Telemetry authentication token.
+ *
+ * SECURITY: Must be set via NEXT_PUBLIC_ANALYTICS_TOKEN environment variable.
+ * No hardcoded default — hardcoding secrets in source code is a critical
+ * vulnerability that allows anyone with repo access to forge telemetry data.
+ *
+ * To set up: add NEXT_PUBLIC_ANALYTICS_TOKEN=<your-token> to your .env file
+ */
+export const TELEMETRY_TOKEN: string = process.env.NEXT_PUBLIC_ANALYTICS_TOKEN || '';
 
 export const TELEMETRY_ENABLED =
   process.env.NEXT_PUBLIC_TELEMETRY_ENABLED !== 'false';

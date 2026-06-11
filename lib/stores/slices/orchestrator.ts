@@ -390,8 +390,9 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
     const currentProvider = configManager.getSelectedProvider();
     const providerConfig = getProvider(currentProvider);
     const apiKey = configManager.getApiKey();
+    const hasApiKey = configManager.isServerMode() ? configManager.hasProviderApiKey(currentProvider) : !!apiKey;
 
-    if (providerConfig.apiKeyRequired && !apiKey) {
+    if (providerConfig.apiKeyRequired && !hasApiKey) {
       toast.error(`Please set your ${providerConfig.name} API key in settings`);
       return;
     }
@@ -891,10 +892,11 @@ export const createOrchestratorSlice: StateCreator<CombinedState, [], [], Orches
   startServerGeneration: async (projectId: string, prompt: string, chatMode: boolean, images?: PendingImage[], options?: StartGenerationOptions) => {
     const provider = configManager.getSelectedProvider();
     const apiKey = configManager.getProviderApiKey(provider);
+    const hasApiKey = configManager.hasProviderApiKey(provider);
     const model = configManager.getProviderModel(provider) || '';
     const projectName = get().projectName || 'Untitled';
 
-    if (!apiKey) {
+    if (!hasApiKey) {
       toast.error('API key required');
       return;
     }

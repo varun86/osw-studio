@@ -9,6 +9,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+/**
+ * Validate deployment ID for use in filesystem paths.
+ * Only alphanumeric, hyphens, and underscores allowed.
+ */
+function isValidDeploymentId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -18,6 +26,11 @@ export async function GET(
   }
 
   const { id } = await params;
+
+  // Validate deployment ID to prevent path traversal
+  if (!isValidDeploymentId(id)) {
+    return new NextResponse('Invalid deployment ID', { status: 400 });
+  }
 
   try {
     const indexPath = path.join(process.cwd(), 'public', 'deployments', id, 'index.html');

@@ -14,6 +14,7 @@ import { logger } from '@/lib/utils';
 import { processHtml } from '@/lib/publishing/html-processor';
 import { generateSitemap, generateRobotsTxt } from '@/lib/publishing/seo-generator';
 import { extractBackendFeatures } from './backend-feature-extractor';
+import { sanitizeFilePath, isPathSafe } from '@/lib/security/path-safety';
 
 export interface BuildResult {
   success: boolean;
@@ -94,8 +95,29 @@ function createServerVfs(
  * Build a static deployment from a deployment entity
  * Uses VirtualServer to compile Handlebars templates (same as export)
  */
+/**
+ * Validate that a deployment ID is safe for use in filesystem paths.
+ * Deployment IDs should be alphanumeric with hyphens only.
+ * Rejects path traversal patterns and special characters.
+ */
+function validateDeploymentId(deploymentId: string): void {
+  if (!deploymentId || typeof deploymentId !== 'string') {
+    throw new Error('Invalid deployment ID: must be a non-empty string');
+  }
+  // Only allow alphanumeric, hyphens, and underscores — no path separators or traversal
+  if (!/^[a-zA-Z0-9_-]+$/.test(deploymentId)) {
+    throw new Error(
+      `Invalid deployment ID: "${deploymentId}" contains disallowed characters. ` +
+      'Only alphanumeric characters, hyphens, and underscores are permitted.'
+    );
+  }
+}
+
 export async function buildStaticDeployment(deploymentId: string, workspaceId?: string): Promise<BuildResult> {
   try {
+    // Validate deployment ID before using it in any filesystem paths
+    validateDeploymentId(deploymentId);
+
     const adapter = workspaceId ? getWorkspaceAdapter(workspaceId) : await createServerAdapter();
     await adapter.init();
 
@@ -254,9 +276,19 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
         continue;
       }
 
-      // Determine file path (remove leading slash)
-      const relativePath = file.path.startsWith('/') ? file.path.slice(1) : file.path;
-      const filePath = path.join(outputDir, relativePath);
+      // Defense-in-depth: reject paths containing traversal patterns early,
+      // before any path resolution. This catches obvious attacks like
+      // /../../../tmp/evil before we even attempt to resolve the path.
+      if (!isPathSafe(file.path)) {
+        logger.warn(`[Static Builder] Skipping file with unsafe path: "${file.path}"`);
+        continue;
+      }
+
+      // Determine file path — sanitize against path traversal attacks
+      // An attacker could set file.path to "../../etc/malicious" to write
+      // outside the deployment directory. sanitizeFilePath() prevents this
+      // even if isPathSafe() is bypassed (e.g., via symlinks or encoding tricks).
+      const filePath = sanitizeFilePath(file.path, outputDir);
 
       // Create directory if needed
       const fileDir = path.dirname(filePath);
@@ -365,6 +397,9 @@ export async function buildStaticDeployment(deploymentId: string, workspaceId?: 
  */
 export async function cleanStaticDeployment(deploymentId: string): Promise<boolean> {
   try {
+    // Validate deployment ID before using it in filesystem paths
+    validateDeploymentId(deploymentId);
+
     const outputDir = path.join(process.cwd(), 'public', 'deployments', deploymentId);
     await fs.rm(outputDir, { recursive: true, force: true });
     return true;

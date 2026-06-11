@@ -6,6 +6,67 @@ import { logger } from '@/lib/utils';
 import { beginCompilation, pushCompileError, commitCompilation } from './compile-errors';
 import { isRuntimeBundled } from '@/lib/runtimes/registry';
 
+// ── Handlebars preview output sanitization ────────────────────────────────────
+
+/**
+ * Strip dangerous HTML patterns from a string to prevent XSS in preview.
+ * Removes <script> tags, javascript: URLs, and inline event handlers.
+ * Preserves safe HTML structure so legitimate content renders correctly.
+ */
+function sanitizeHtmlString(input: string): string {
+  if (typeof input !== 'string') return input;
+  let out = input;
+  // Remove <script>…</script> blocks (including content)
+  out = out.replace(/<script\b[^<]*(?:<\/[script][^>]*)?>/gi, '');
+  out = out.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+  // Remove javascript: URLs in href / src / action attributes
+  out = out.replace(/(href|src|action)\s*=\s*["']\s*javascript\s*:[^"']*["']/gi, '$1="#"');
+  out = out.replace(/(href|src|action)\s*=\s*javascript\s*:[^\s>]*/gi, '$1="#"');
+  // Remove on* inline event handler attributes (onclick, onload, onerror, …)
+  out = out.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');
+  out = out.replace(/\bon\w+\s*=\s*[^\s>]*/gi, '');
+  // Remove data: URLs with html/script mime in src attributes
+  out = out.replace(/src\s*=\s*["']\s*data\s*:\s*text\/(?:html|javascript)[^"']*['"]/gi, 'src="#"');
+  return out;
+}
+
+/**
+ * Recursively sanitize all string values in a template context object.
+ * This prevents XSS when context data is rendered via {{{triple-stache}}}
+ * or other unescaped output paths.
+ */
+function sanitizeContext(obj: unknown): unknown {
+  if (typeof obj === 'string') return sanitizeHtmlString(obj);
+  if (Array.isArray(obj)) return obj.map(sanitizeContext);
+  if (obj !== null && typeof obj === 'object') {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      sanitized[key] = sanitizeContext(value);
+    }
+    return sanitized;
+  }
+  return obj;
+}
+
+/**
+ * Sanitize the final rendered HTML output from a Handlebars template.
+ * Applied after template rendering to catch any XSS vectors that slip
+ * through data escaping, especially via {{{triple-stache}}} expressions.
+ */
+function sanitizeTemplateOutput(html: string): string {
+  // Remove <script> tags and their content
+  let out = html.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+  // Remove javascript: URLs
+  out = out.replace(/(href|src|action)\s*=\s*["']\s*javascript\s*:[^"']*["']/gi, '$1="#"');
+  out = out.replace(/(href|src|action)\s*=\s*javascript\s*:[^\s>]*/gi, '$1="#"');
+  // Remove inline event handlers
+  out = out.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');
+  out = out.replace(/\bon\w+\s*=\s*[^\s>]*/gi, '');
+  // Remove data: URLs with dangerous mime types
+  out = out.replace(/src\s*=\s*["']\s*data\s*:\s*text\/(?:html|javascript)[^"']*['"]/gi, 'src="#"');
+  return out;
+}
+
 export class VirtualServer {
   private vfs: VirtualFileSystem;
   private projectId: string;
@@ -71,6 +132,11 @@ export class VirtualServer {
     this.handlebars.registerHelper('formatDate', (date: Date | string) => {
       const d = new Date(date);
       return d.toLocaleDateString();
+    });
+    // Sanitization helper — strips XSS vectors from a string for safe rendering
+    this.handlebars.registerHelper('sanitize', (value: any) => {
+      if (typeof value !== 'string') return value;
+      return sanitizeHtmlString(value);
     });
 
     // Array helpers
@@ -874,9 +940,15 @@ export class VirtualServer {
         // Invalid data file, use empty context
       }
 
+      // Sanitize context data to prevent XSS via {{{triple-stache}}} expressions
+      const sanitizedContext = sanitizeContext(context) as Record<string, unknown>;
+
       // Compile the content as a Handlebars template
       const template = this.handlebars.compile(content);
-      const result = template(context);
+      let result = template(sanitizedContext);
+
+      // Sanitize the rendered output to catch any remaining XSS vectors
+      result = sanitizeTemplateOutput(result);
       return result;
     } catch (error) {
       logger.error('VirtualServer: Error processing Handlebars templates:', error);

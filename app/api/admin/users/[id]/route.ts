@@ -6,20 +6,36 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, verifyInstanceApiKey } from '@/lib/auth/session';
+import { requireAdmin, verifyInstanceApiKey } from '@/lib/auth/session';
 import { getUserById, updateUser, deactivateUser, listUserWorkspaces } from '@/lib/auth/system-database';
+import { revokeAllUserSessions } from '@/lib/auth/session-revocation';
+import { internalErrorResponse } from '@/lib/security/error-response';
+import { adminRateLimiter, RATE_LIMIT_CONFIG, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+/** SECURITY (Step 51): Rate limit check for admin user detail routes */
+function checkRateLimit(request: NextRequest): NextResponse | null {
+  const identifier = getIdentifier(request);
+  if (!adminRateLimiter.check(identifier, RATE_LIMIT_CONFIG.admin)) {
+    const retryAfter = adminRateLimiter.getResetTime(identifier, RATE_LIMIT_CONFIG.admin);
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+    );
+  }
+  return null;
+}
 
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
     const user = getUserById(id);
@@ -41,7 +57,7 @@ export async function GET(
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to get user' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
 
@@ -49,12 +65,12 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
     const body = await request.json();
@@ -64,17 +80,24 @@ export async function PUT(
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
+    const deactivating = body.active === false || body.active === 0;
+
     updateUser(id, {
       active: body.active !== undefined ? (body.active ? 1 : 0) : undefined,
       display_name: body.displayName,
     });
+
+    // If user is being deactivated, revoke all their sessions immediately
+    if (deactivating) {
+      revokeAllUserSessions(id, 'deactivation');
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
 
@@ -82,12 +105,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
 
@@ -97,11 +120,16 @@ export async function DELETE(
     }
 
     deactivateUser(id);
+
+    // Revoke all sessions for this user so they are immediately logged out
+    // on all devices, preventing continued access after deactivation.
+    revokeAllUserSessions(id, 'deactivation');
+
     return NextResponse.json({ success: true });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }

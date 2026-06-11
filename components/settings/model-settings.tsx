@@ -42,7 +42,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
   const [currentApiKey, setCurrentApiKey] = useState('');
   const [apiKeyStored, setApiKeyStored] = useState(() => {
     const p = configManager.getSelectedProvider();
-    return getProvider(p).apiKeyRequired ? !!configManager.getProviderApiKey(p) : false;
+    return getProvider(p).apiKeyRequired ? configManager.hasProviderApiKey(p) : false;
   });
   const [codexAvailable, setCodexAvailable] = useState(true);
   const [useSeparateChatModel, setUseSeparateChatModel] = useState<boolean>(() => {
@@ -68,12 +68,13 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
   }, []);
 
   useEffect(() => {
-    // Update API key when provider changes
-    const key = configManager.getProviderApiKey(selectedProvider) || '';
+    // Update API key status when provider changes
+    // In server mode, we don't show the actual key (it's server-side only)
+    const key = configManager.isServerMode() ? '' : (configManager.getProviderApiKey(selectedProvider) || '');
     setCurrentApiKey(key);
     setKeyValid(null); // Reset validation
     const providerCfg = getProvider(selectedProvider);
-    setApiKeyStored(providerCfg.apiKeyRequired ? !!key : false);
+    setApiKeyStored(providerCfg.apiKeyRequired ? configManager.hasProviderApiKey(selectedProvider) : false);
 
     // Load separate chat model setting for this provider
     if (typeof window !== 'undefined') {
@@ -97,7 +98,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
   const handleProviderChange = (provider: ProviderId) => {
     setSelectedProvider(provider);
     configManager.setSelectedProvider(provider);
-    track('provider_selected', { provider, has_api_key: !!configManager.getProviderApiKey(provider) });
+    track('provider_selected', { provider, has_api_key: configManager.hasProviderApiKey(provider) });
   };
 
   const handleApiKeyChange = (key: string) => {
@@ -164,7 +165,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
   };
 
   const handleApiKeyDisconnect = () => {
-    configManager.setProviderApiKey(selectedProvider, '');
+    configManager.removeProviderApiKey(selectedProvider);
     configManager.clearModelCache(selectedProvider);
     setApiKeyStored(false);
     setCurrentApiKey('');
@@ -228,13 +229,13 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
         selectedProvider === 'huggingface' ? (
           <HFAuthPanel onAuthChange={() => {
             window.dispatchEvent(new CustomEvent('apiKeyUpdated', {
-              detail: { provider: selectedProvider, hasKey: !!configManager.getProviderApiKey(selectedProvider) }
+              detail: { provider: selectedProvider, hasKey: configManager.hasProviderApiKey(selectedProvider) }
             }));
           }} />
         ) : (
           <CodexAuthPanel onAuthChange={() => {
             window.dispatchEvent(new CustomEvent('apiKeyUpdated', {
-              detail: { provider: selectedProvider, hasKey: !!configManager.getProviderApiKey(selectedProvider) }
+              detail: { provider: selectedProvider, hasKey: configManager.hasProviderApiKey(selectedProvider) }
             }));
           }} />
         )
@@ -242,7 +243,7 @@ export function ModelSettingsPanel({ onClose, onModelChange, showJudgeModel, onJ
         apiKeyStored ? (
           <ConnectionBadge
             method="API Key"
-            extra={(() => { const k = configManager.getProviderApiKey(selectedProvider); return k ? `···${k.slice(-4)}` : undefined; })()}
+            extra={(() => { const hint = configManager.getProviderApiKeyHint(selectedProvider); return hint ? `···${hint}` : undefined; })()}
             info={providerConfig.apiKeyHelpUrl && (
               <a
                 href={providerConfig.apiKeyHelpUrl}

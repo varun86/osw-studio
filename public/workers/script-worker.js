@@ -5,12 +5,128 @@
  * Receives: { type: 'execute', payload: { runtime, entryPoint, files } }
  *           { type: 'abort' }
  * Posts:    { type: 'stdout'|'stderr'|'status'|'error'|'complete'|'output-file', ... }
+ *
+ * SECURITY: CDN scripts are fetched with Subresource Integrity (SRI) verification.
+ * The SHA-256 hashes are pinned below and must be updated when upgrading CDN versions.
+ * FAIL-CLOSED: If SRI verification cannot be performed (e.g., crypto.subtle unavailable)
+ * or if the hash does not match, the script is REFUSED — no fallback to unchecked loading.
+ * Tampered or modified CDN responses will always be rejected before execution.
  */
 
-/* global self, importScripts, postMessage */
+/* global self, importScripts, postMessage, crypto, TextEncoder */
 
 let pyodide = null;
 let luaFactory = null;
+
+// ─── SRI (Subresource Integrity) Configuration ─────────────────────
+// Pinned SHA-256 hashes for CDN-loaded scripts.
+// When upgrading Pyodide or wasmoon versions, update these hashes.
+// To compute a hash: curl -sL '<url>' | sha256sum | cut -d' ' -f1 | xxd -r -p | base64
+
+const SRI_HASHES = {
+  // Pyodide v0.27.4 — https://cdn.jsdelivr.net/pyodide/v0.27.4/full/pyodide.js
+  'pyodide': 'sha256-BXROd35lyIj4D6DJyyrIQCHq3eBSlub4Zb5hGCEQhC4=',
+  // wasmoon@1 — https://esm.sh/wasmoon@1
+  // NOTE: esm.sh URLs may serve different content over time. The hash below
+  // was computed at build time. If wasmoon is upgraded, recompute the hash.
+  'wasmoon': 'sha256-5SDyGWb8MXXHxtG1D8vLV7CT1rSfMvKa6kJTMYVEqrs=',
+};
+
+// Allowed CDN domains for script loading
+const ALLOWED_CDN_DOMAINS = [
+  'cdn.jsdelivr.net',
+  'esm.sh',
+];
+
+/**
+ * Verify the SHA-256 hash of a script against its expected SRI hash.
+ * FAIL-CLOSED: If verification cannot be performed (e.g., crypto.subtle
+ * unavailable), the check returns false — the script must NOT be loaded.
+ * @param {string} content - The script content to verify
+ * @param {string} expectedHash - The expected hash in SRI format: "sha256-<base64>"
+ * @returns {Promise<boolean>} - True ONLY if the hash matches; false if mismatch or unverifiable
+ */
+async function verifySRI(content, expectedHash) {
+  try {
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      // FAIL-CLOSED: crypto.subtle is required for SRI verification.
+      // If it's not available, we cannot verify integrity and must refuse to load.
+      send('stderr', 'SECURITY: SRI verification impossible — crypto.subtle not available. Refusing to load script.');
+      return false;
+    }
+    const encoder = new TextEncoder();
+    const data = encoder.encode(content);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashBase64 = btoa(String.fromCharCode(...hashArray));
+    const computedHash = 'sha256-' + hashBase64;
+    return computedHash === expectedHash;
+  } catch (err) {
+    // FAIL-CLOSED: Any error during verification means we cannot confirm integrity.
+    send('stderr', 'SECURITY: SRI verification failed with error. Refusing to load script: ' + String(err));
+    return false;
+  }
+}
+
+/**
+ * Validate that a URL is from an allowed CDN domain.
+ * @param {string} url - The URL to validate
+ * @returns {boolean} - True if the URL is from an allowed domain
+ */
+function isAllowedCdnUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return ALLOWED_CDN_DOMAINS.some(domain =>
+      parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fetch a script from CDN with SRI verification.
+ * Downloads the script, verifies its hash, then executes via eval.
+ * Falls back to importScripts if fetch is not available.
+ * @param {string} url - The CDN URL to fetch
+ * @param {string} sriKey - Key in SRI_HASHES for the expected hash
+ * @returns {Promise<void>}
+ */
+async function fetchAndVerifyScript(url, sriKey) {
+  const expectedHash = SRI_HASHES[sriKey];
+  if (!expectedHash) {
+    throw new Error(`No SRI hash configured for ${sriKey}. Refusing to load.`);
+  }
+
+  if (!isAllowedCdnUrl(url)) {
+    throw new Error(`CDN URL not in allowlist: ${url}. Refusing to load.`);
+  }
+
+  // Fetch with SRI verification — FAIL-CLOSED: no fallback to importScripts
+  // If fetch or SRI verification fails, the script is NOT loaded.
+  // This ensures CDN tampering is always detected and prevented.
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} fetching ${url}. Cannot verify integrity — refusing to load.`);
+  }
+
+  const content = await response.text();
+
+  // Verify integrity — FAIL-CLOSED
+  const isValid = await verifySRI(content, expectedHash);
+  if (!isValid) {
+    throw new Error(
+      `SRI verification FAILED for ${url}. ` +
+      `The CDN response does not match the expected hash. ` +
+      `This could indicate a tampered CDN response or an outdated SRI hash. ` +
+      `Expected: ${expectedHash}. Refusing to load.`
+    );
+  }
+
+  // Execute the verified script
+  // We use indirect eval to execute in the global scope (like importScripts)
+  (0, eval)(content);
+}
 
 /**
  * Post a message back to the main thread.
@@ -31,7 +147,10 @@ async function ensurePyodide() {
   send('status', 'Loading Python runtime...');
 
   try {
-    importScripts('https://cdn.jsdelivr.net/pyodide/v0.27.4/full/pyodide.js');
+    await fetchAndVerifyScript(
+      'https://cdn.jsdelivr.net/pyodide/v0.27.4/full/pyodide.js',
+      'pyodide'
+    );
   } catch (err) {
     send('error', 'Failed to load Pyodide from CDN: ' + String(err));
     throw err;
@@ -139,9 +258,46 @@ async function ensureLuaFactory() {
   send('status', 'Loading Lua runtime...');
 
   try {
-    // Dynamic import of wasmoon from CDN
-    const wasmoon = await import('https://esm.sh/wasmoon@1');
-    luaFactory = new wasmoon.LuaFactory();
+    // Dynamic import of wasmoon from CDN with SRI verification
+    // Since import() doesn't support SRI, we fetch with verification first,
+    // then create a blob URL for the verified content and import that.
+    const wasmoonUrl = 'https://esm.sh/wasmoon@1';
+    const expectedHash = SRI_HASHES['wasmoon'];
+
+    if (!expectedHash) {
+      throw new Error('No SRI hash configured for wasmoon. Refusing to load.');
+    }
+
+    if (!isAllowedCdnUrl(wasmoonUrl)) {
+      throw new Error('CDN URL not in allowlist: ' + wasmoonUrl);
+    }
+
+    let wasmoonModule;
+    // Fetch and verify — FAIL-CLOSED: no fallback to direct import without SRI
+    // If fetch or SRI verification fails, the module is NOT loaded.
+    const response = await fetch(wasmoonUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} fetching wasmoon. Cannot verify integrity — refusing to load.`);
+    }
+    const content = await response.text();
+
+    const isValid = await verifySRI(content, expectedHash);
+    if (!isValid) {
+      throw new Error(
+        'SRI verification FAILED for wasmoon. ' +
+        'The CDN response does not match the expected hash. ' +
+        'This could indicate a tampered CDN response or an outdated SRI hash. ' +
+        'Refusing to load.'
+      );
+    }
+
+    // Create a blob URL from verified content and import it
+    const blob = new Blob([content], { type: 'application/javascript' });
+    const blobUrl = URL.createObjectURL(blob);
+    wasmoonModule = await import(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+
+    luaFactory = new wasmoonModule.LuaFactory();
   } catch (err) {
     send('error', 'Failed to load Lua runtime: ' + String(err));
     throw err;

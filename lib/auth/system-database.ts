@@ -13,6 +13,7 @@ import fs from 'fs';
 import { randomUUID } from 'crypto';
 import { enqueueEvent } from '../webhooks/outbox';
 import { startDeliveryLoop } from '../webhooks/delivery';
+import { applyEncryptionKey } from './db-crypto';
 
 let systemDb: Database.Database | null = null;
 
@@ -81,10 +82,11 @@ export function getSystemDatabase(): Database.Database {
 
   const dbPath = path.join(dataDir, 'system.sqlite');
   systemDb = new Database(dbPath);
-  const encryptionKey = process.env.DB_ENCRYPTION_KEY;
-  if (encryptionKey) {
-    systemDb.pragma(`key='${encryptionKey}'`);
-  }
+  // SECURITY: Apply encryption key with validation to prevent SQL injection
+  // Previously, the key was interpolated directly: db.pragma(`key='${encryptionKey}'`)
+  // This allowed SQL injection if the env var contained single quotes.
+  // applyEncryptionKey() validates the key contains only [a-fA-F0-9+/=] before use.
+  applyEncryptionKey(systemDb, process.env.DB_ENCRYPTION_KEY, 'DB_ENCRYPTION_KEY');
   systemDb.pragma('journal_mode = WAL');
   systemDb.pragma('foreign_keys = ON');
   systemDb.pragma('synchronous = NORMAL');
@@ -141,12 +143,32 @@ function initSystemSchema(db: Database.Database): void {
       FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS consumed_handoff_tokens (
+      jti TEXT PRIMARY KEY,
+      consumed_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_workspaces_owner ON workspaces(owner_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_access_user ON workspace_access(user_id);
     CREATE INDEX IF NOT EXISTS idx_workspace_access_workspace ON workspace_access(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_workspace ON deployment_routing(workspace_id);
     CREATE INDEX IF NOT EXISTS idx_deployment_routing_slug ON deployment_routing(slug);
+
+    CREATE TABLE IF NOT EXISTS user_api_keys (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      encrypted_key TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      auth_tag TEXT NOT NULL,
+      key_hint TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(user_id, provider),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id);
 
     CREATE TABLE IF NOT EXISTS webhook_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -571,6 +593,49 @@ export function getWorkspaceProjectCount(workspaceId: string): number {
 // ---------------------------------------------------------------------------
 // Close
 // ---------------------------------------------------------------------------
+
+/**
+ * Mark a handoff token JTI as consumed in the database.
+ * Returns true if the JTI was successfully marked (not previously consumed).
+ */
+export function markHandoffTokenConsumed(jti: string): boolean {
+  try {
+    const db = getSystemDatabase();
+    const now = Date.now();
+    db.prepare('INSERT OR IGNORE INTO consumed_handoff_tokens (jti, consumed_at) VALUES (?, ?)').run(jti, now);
+    // Check if the insert actually happened (not ignored due to duplicate)
+    const row = db.prepare('SELECT consumed_at FROM consumed_handoff_tokens WHERE jti = ?').get(jti) as { consumed_at: number } | undefined;
+    return row?.consumed_at === now;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a handoff token JTI has been consumed.
+ */
+export function isHandoffTokenConsumed(jti: string): boolean {
+  try {
+    const db = getSystemDatabase();
+    const row = db.prepare('SELECT jti FROM consumed_handoff_tokens WHERE jti = ?').get(jti);
+    return !!row;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cleanup expired consumed handoff tokens (older than 5 minutes).
+ */
+export function cleanupExpiredHandoffTokens(): void {
+  try {
+    const db = getSystemDatabase();
+    const cutoff = Date.now() - 5 * 60 * 1000; // 5 minutes
+    db.prepare('DELETE FROM consumed_handoff_tokens WHERE consumed_at < ?').run(cutoff);
+  } catch {
+    // Ignore cleanup errors
+  }
+}
 
 /**
  * Close system database connection

@@ -35,7 +35,9 @@ export type ModelEntry = string | { id: string; contextLength?: number; inputMod
 export async function getAvailableModels(apiKey?: string, provider?: ProviderId): Promise<ModelEntry[]> {
   const currentProvider = provider || configManager.getSelectedProvider() || 'openrouter';
   const providerConfig = getProvider(currentProvider);
-  const key = apiKey || configManager.getProviderApiKey(currentProvider);
+  // In server mode, don't send the API key — the server will look it up from encrypted store
+  // In desktop mode, include the key from localStorage
+  const key = configManager.isServerMode() ? undefined : (apiKey || configManager.getProviderApiKey(currentProvider));
 
   if (!providerConfig.supportsModelDiscovery && providerConfig.models) {
     return providerConfig.models.map(m => m.id);

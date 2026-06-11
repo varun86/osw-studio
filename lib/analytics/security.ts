@@ -7,7 +7,7 @@
 
 import crypto from 'crypto';
 
-const TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days (for static sites)
+const TOKEN_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48 hours (reduced from 30 days for security)
 
 /**
  * Generate a signed analytics tracking token
@@ -32,16 +32,21 @@ export function generateAnalyticsToken(deploymentId: string): string {
 }
 
 /**
- * Verify an analytics tracking token
+ * Verify an analytics tracking token and optionally issue a fresh one
+ * (rolling token refresh).
+ *
+ * Rolling refresh: each valid request returns a new token with a fresh
+ * timestamp, so active sessions never expire. Stolen tokens expire after
+ * 48 hours of inactivity because they are not refreshed.
  *
  * @param token - Base64-encoded token from client
  * @param expectedDeploymentId - Expected deployment ID
- * @returns true if valid, false otherwise
+ * @returns Object with valid flag and, if valid, a refreshed token
  */
 export function verifyAnalyticsToken(
   token: string,
   expectedDeploymentId: string
-): boolean {
+): { valid: boolean; refreshedToken?: string } {
   try {
     const secret = getAnalyticsSecret();
 
@@ -50,20 +55,20 @@ export function verifyAnalyticsToken(
     const parts = decoded.split(':');
 
     if (parts.length !== 4) {
-      return false; // Invalid format
+      return { valid: false }; // Invalid format
     }
 
     const [deploymentId, timestamp, nonce, signature] = parts;
 
     // Verify deployment ID matches
     if (deploymentId !== expectedDeploymentId) {
-      return false;
+      return { valid: false };
     }
 
     // Verify timestamp is recent (prevent replay attacks)
     const tokenAge = Date.now() - parseInt(timestamp, 10);
     if (tokenAge > TOKEN_EXPIRY_MS || tokenAge < 0) {
-      return false; // Token expired or from future
+      return { valid: false }; // Token expired or from future
     }
 
     // Verify signature
@@ -74,13 +79,22 @@ export function verifyAnalyticsToken(
       .digest('hex');
 
     // Constant-time comparison to prevent timing attacks
-    return crypto.timingSafeEqual(
+    const signatureValid = crypto.timingSafeEqual(
       Buffer.from(signature),
       Buffer.from(expectedSignature)
     );
-  } catch (error) {
+
+    if (!signatureValid) {
+      return { valid: false };
+    }
+
+    // Token is valid — issue a refreshed token (rolling refresh)
+    const refreshedToken = generateAnalyticsToken(deploymentId);
+
+    return { valid: true, refreshedToken };
+  } catch {
     // Invalid token format or other error
-    return false;
+    return { valid: false };
   }
 }
 
@@ -92,17 +106,29 @@ function getAnalyticsSecret(): string {
   const secret = process.env.ANALYTICS_SECRET;
 
   if (!secret) {
-    // In development, use a stable secret to persist across restarts
-    if (process.env.NODE_ENV === 'development') {
-      console.warn(
-        '[Analytics Security] ANALYTICS_SECRET not set, using development secret (not for production)'
-      );
-      return 'dev-analytics-secret-do-not-use-in-production-change-this-value';
-    }
+    // SECURITY: No hardcoded dev secret. Auto-generate a random per-instance secret
+    // and persist it in the system database so it survives restarts.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { getSystemDatabase } = require('@/lib/auth/system-database') as typeof import('@/lib/auth/system-database');
+      const db = getSystemDatabase();
 
-    throw new Error(
-      'ANALYTICS_SECRET environment variable must be set in production'
-    );
+      // Check if we have a persisted secret
+      const existing = db.prepare("SELECT value FROM system_config WHERE key = 'analytics_secret'").get() as { value: string } | undefined;
+      if (existing?.value) {
+        return existing.value;
+      }
+
+      // Generate and persist a new random secret
+      const newSecret = crypto.randomBytes(32).toString('hex');
+      db.prepare("INSERT OR REPLACE INTO system_config (key, value) VALUES ('analytics_secret', ?)").run(newSecret);
+      console.warn('[Analytics Security] ANALYTICS_SECRET not set, auto-generated and persisted a random secret');
+      return newSecret;
+    } catch {
+      // System database not available (browser mode) — generate ephemeral secret
+      console.warn('[Analytics Security] ANALYTICS_SECRET not set and DB unavailable, using ephemeral secret (not for production)');
+      return crypto.randomBytes(32).toString('hex');
+    }
   }
 
   return secret;
@@ -124,13 +150,45 @@ export function validateOrigin(
 
   return allowedOrigins.some((allowed) => {
     if (allowed.includes('*')) {
+      // Wildcard subdomain matching (e.g., https://*.oswstudio.com)
       const suffix = allowed.replace(/^https?:\/\/\*/, '');
-      const matchesOrigin = origin.endsWith(suffix) && /^https?:\/\//.test(origin);
-      const matchesReferer = referer.endsWith(suffix) || referer.includes(suffix + '/');
+      // SECURITY: Use proper hostname parsing instead of endsWith()
+      // endsWith() would match "evil-oswstudio.com" for ".oswstudio.com"
+      const matchesOrigin = isValidSubdomainMatch(origin, suffix) && /^https?:\/\//.test(origin);
+      const matchesReferer = isValidSubdomainMatch(referer, suffix);
       return matchesOrigin || matchesReferer;
     }
     return origin.startsWith(allowed) || referer.startsWith(allowed);
   });
+}
+
+/**
+ * Validate that a URL's hostname is a proper subdomain match for the given suffix.
+ *
+ * SECURITY: Prevents bypass via lookalike domains.
+ * e.g., "evil-oswstudio.com" must NOT match ".oswstudio.com"
+ * but "app.oswstudio.com" must match ".oswstudio.com"
+ *
+ * @param urlStr - The URL to validate
+ * @param suffix - The expected suffix (e.g., ".oswstudio.com")
+ * @returns true if the URL hostname properly ends with the suffix
+ */
+function isValidSubdomainMatch(urlStr: string, suffix: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    const hostname = parsed.hostname;
+
+    // The hostname must end with the suffix AND either:
+    // 1. The suffix starts with a dot (e.g., ".oswstudio.com") — hostname is a subdomain
+    // 2. The hostname equals the suffix exactly (root domain match)
+    if (suffix.startsWith('.')) {
+      return hostname.endsWith(suffix) || hostname === suffix.slice(1);
+    }
+    return hostname === suffix || hostname.endsWith('.' + suffix);
+  } catch {
+    // Not a valid URL
+    return false;
+  }
 }
 
 /**
@@ -160,7 +218,11 @@ export function getAllowedOrigins(
   // Add custom domain if configured
   if (customDomain) {
     origins.push(`https://${customDomain}`);
-    origins.push(`http://${customDomain}`);
+    // SECURITY: Only allow HTTP for custom domains in development.
+    // In production, custom domains must use HTTPS to prevent MITM attacks.
+    if (process.env.NODE_ENV !== 'production') {
+      origins.push(`http://${customDomain}`);
+    }
   }
 
   // Allow subdomain-routed deployments (e.g., my-site.oswstudio.com)

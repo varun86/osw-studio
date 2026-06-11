@@ -20,6 +20,8 @@ export function setupOrchestratorMocks() {
       getDefaultModel: () => 'gpt-4',
       getProviderModel: () => 'gpt-4',
       getCachedModels: () => null,
+      isServerMode: () => false,
+      hasProviderApiKey: () => true,
     },
     migrateBackendKey: () => false,
   }));

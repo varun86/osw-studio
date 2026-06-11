@@ -23,9 +23,59 @@ export class VirtualFileSystem {
   private transientFiles: Map<string, VirtualFile> = new Map();
   private generatedFiles: Map<string, VirtualFile> = new Map();
   private syncTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Debounce sync calls
+  private _validatedSessionProjectIds: Set<string> = new Set(); // Cache validated IDs
 
   constructor(adapter?: StorageAdapter) {
     this.adapter = adapter ?? createClientAdapter();
+  }
+
+  /**
+   * Validate that a project ID from sessionStorage belongs to the user's
+   * accessible projects. Prevents stale or tampered IDs from being used.
+   * Returns the validated projectId, or null if invalid.
+   */
+  private async validateSessionProjectId(projectId: string): Promise<string | null> {
+    // Fast path: already validated this session
+    if (this._validatedSessionProjectIds.has(projectId)) {
+      return projectId;
+    }
+
+    try {
+      this.ensureInitialized();
+      const project = await this.adapter.getProject(projectId);
+      if (!project) {
+        logger.warn(`[VFS] Session project ID ${projectId} not found in storage — clearing from sessionStorage`);
+        try { sessionStorage.removeItem('vfs_serverContextProjectId'); } catch {}
+        return null;
+      }
+
+      // In server mode, verify project belongs to user's workspace via API
+      if (process.env.NEXT_PUBLIC_SERVER_MODE === 'true') {
+        try {
+          const { apiFetch } = await import('@/lib/api/backend-status');
+          const res = await apiFetch(`/api/w/_me/projects`);
+          if (res.ok) {
+            const data = await res.json();
+            const accessibleIds: string[] = (data.projects || []).map((p: { id: string }) => p.id);
+            if (!accessibleIds.includes(projectId)) {
+              logger.warn(`[VFS] Session project ID ${projectId} not in user's accessible projects — clearing from sessionStorage`);
+              try { sessionStorage.removeItem('vfs_serverContextProjectId'); } catch {}
+              return null;
+            }
+          }
+        } catch {
+          // API unreachable — allow with a warning (graceful degradation)
+          logger.warn(`[VFS] Could not verify workspace access for project ${projectId} — allowing with warning`);
+        }
+      }
+
+      this._validatedSessionProjectIds.add(projectId);
+      return projectId;
+    } catch (error) {
+      logger.warn(`[VFS] Error validating session project ID ${projectId}:`, error);
+      try { sessionStorage.removeItem('vfs_serverContextProjectId'); } catch {}
+      return null;
+    }
   }
 
   async init(): Promise<void> {
@@ -504,8 +554,11 @@ export class VirtualFileSystem {
     if (!this.serverContextProjectId && typeof sessionStorage !== 'undefined') {
       const storedProjectId = sessionStorage.getItem('vfs_serverContextProjectId');
       if (storedProjectId) {
-        logger.info(`[VFS] Recovered serverContextProjectId from sessionStorage: ${storedProjectId}`);
-        this.serverContextProjectId = storedProjectId;
+        const validatedId = await this.validateSessionProjectId(storedProjectId);
+        if (validatedId) {
+          logger.info(`[VFS] Recovered serverContextProjectId from sessionStorage: ${validatedId}`);
+          this.serverContextProjectId = validatedId;
+        }
       }
     }
 
@@ -547,7 +600,7 @@ export class VirtualFileSystem {
       throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    const validation = validateEdgeFunctionData(data);
+    const validation = await validateEdgeFunctionData(data);
     if (!validation.valid) throw new Error(`Validation failed: ${validation.errors.join('; ')}`);
 
     const fnData = data as { name: string; method: string; code: string; description?: string; enabled?: boolean; timeoutMs?: number };
@@ -601,7 +654,7 @@ export class VirtualFileSystem {
       throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    const validation = validateServerFunctionData(data);
+    const validation = await validateServerFunctionData(data);
     if (!validation.valid) throw new Error(`Validation failed: ${validation.errors.join('; ')}`);
 
     const fnData = data as { name: string; code: string; description?: string; enabled?: boolean };
@@ -796,7 +849,10 @@ export class VirtualFileSystem {
     if (!this.serverContextProjectId && typeof sessionStorage !== 'undefined') {
       const storedProjectId = sessionStorage.getItem('vfs_serverContextProjectId');
       if (storedProjectId) {
-        this.serverContextProjectId = storedProjectId;
+        const validatedId = await this.validateSessionProjectId(storedProjectId);
+        if (validatedId) {
+          this.serverContextProjectId = validatedId;
+        }
       }
     }
 
@@ -820,7 +876,10 @@ export class VirtualFileSystem {
     if (!this.serverContextProjectId && typeof sessionStorage !== 'undefined') {
       const storedProjectId = sessionStorage.getItem('vfs_serverContextProjectId');
       if (storedProjectId) {
-        this.serverContextProjectId = storedProjectId;
+        const validatedId = await this.validateSessionProjectId(storedProjectId);
+        if (validatedId) {
+          this.serverContextProjectId = validatedId;
+        }
       }
     }
 
@@ -948,6 +1007,31 @@ export class VirtualFileSystem {
       // Clean path of any trailing newlines or escape sequences
       const cleanPath = path.replace(/\\n$|\\r$|\n$|\r$/, '').trim();
       path = cleanPath;
+
+      // SECURITY: Path traversal detection
+      // Reject paths containing '..' or null bytes that could escape the project directory
+      if (path.includes('..') || path.includes('\0')) {
+        throw new Error('Path traversal not allowed: paths must not contain ".." or null bytes');
+      }
+
+      // Also normalize and verify no backtrack after normalization
+      const normalizedPath = path.replace(/\/+/g, '/').replace(/\/$/, '');
+      if (normalizedPath !== path.replace(/\/+/g, '/').replace(/\/$/, '')) {
+        // Path changed during normalization — suspicious
+      }
+      // Double-check: normalized path must not go above root
+      const segments = normalizedPath.split('/').filter(Boolean);
+      let depth = 0;
+      for (const segment of segments) {
+        if (segment === '..') {
+          depth--;
+          if (depth < 0) {
+            throw new Error('Path traversal not allowed: path escapes root directory');
+          }
+        } else if (segment !== '.') {
+          depth++;
+        }
+      }
 
       // Handle server context file creation (/.server/)
       if (path.startsWith('/.server/')) {

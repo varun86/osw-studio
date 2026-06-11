@@ -29,6 +29,7 @@ import { createDatabaseAPI } from './database-api';
 import { RuntimeDatabase } from '@/lib/vfs/adapters/runtime-database';
 import { decryptSecret, isEncryptionConfigured } from './secrets-crypto';
 import { createHash, randomUUID } from 'crypto';
+import { validateUrlForSSRF, isPrivateIP, isBareIPAddress } from '@/lib/security/ssrf-protection';
 
 // Cache the QuickJS module to avoid re-initializing WASM on every request
 let quickJSModulePromise: Promise<QuickJSWASMModule> | null = null;
@@ -62,10 +63,20 @@ const FETCH_TIMEOUT_MS = 10000;
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024; // 5MB
 
 /**
- * Check if a URL targets a private/internal IP address
- * Only enforced in production to allow local development
+ * Check if a URL targets a private/internal IP address.
+ *
+ * DEPRECATED: This function is kept for reference but is NO LONGER USED.
+ * It has been replaced by validateUrlForSSRF() from @/lib/security/ssrf-protection
+ * which performs DNS resolution to prevent DNS rebinding attacks.
+ *
+ * Known bypasses of this implementation:
+ * - DNS rebinding (string check ≠ actual connection IP)
+ * - Development mode bypass (all checks skipped in non-production)
+ * - Missing IPv6 private ranges (::ffff:127.0.0.1, fc00::/7, etc.)
+ * - Obfuscated IPs (0x7f000001, 017700000001, 2130706433)
+ * - Missing IP ranges (0.0.0.0, 100.64.0.0/10, 198.18.0.0/15)
  */
-function isPrivateUrl(urlString: string): boolean {
+function isPrivateUrl_Deprecated(urlString: string): boolean {
   // Skip check in development
   if (process.env.NODE_ENV !== 'production') {
     return false;
@@ -144,14 +155,17 @@ export async function executeFunction(
           decryptedSecrets[record.name] = decryptSecret(
             record.encryptedValue,
             record.iv,
-            record.authTag
+            record.authTag,
+            record.keyVersion
           );
         } catch {
-          logs.push(`[WARN] Failed to decrypt secret "${record.name}"`);
+          // SECURITY: Don't leak secret names in logs
+          logs.push(`[WARN] Failed to decrypt one or more secrets`);
         }
       }
     } catch (error) {
-      logs.push(`[WARN] Failed to load secrets: ${error instanceof Error ? error.message : String(error)}`);
+      // SECURITY: Don't include crypto error details in logs
+      logs.push(`[WARN] Failed to load secrets`);
     }
   }
 
@@ -609,22 +623,35 @@ function injectFetch(context: QuickJSContext, logs: string[], fetchState: FetchS
       }
 
       // Validate URL and protocol
-      let protocol: string;
+      let parsedUrl: URL;
       try {
-        const parsedUrl = new URL(url);
-        protocol = parsedUrl.protocol;
+        parsedUrl = new URL(url);
       } catch {
         throw new Error('Invalid URL');
       }
 
-      if (!['http:', 'https:'].includes(protocol)) {
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
         throw new Error('Only http and https protocols are allowed');
       }
 
-      // Private IP check (production only)
-      if (isPrivateUrl(url)) {
-        throw new Error('Requests to private/internal addresses are not allowed');
+      // SSRF check — two-phase validation:
+      // Phase 1 (synchronous): Protocol + direct IP checks
+      // Phase 2 (async, inside fetch execution): DNS resolution check
+      // This split is needed because the QuickJS callback is synchronous,
+      // but DNS resolution is async. The async check happens inside the
+      // actual fetch execution (which is already async).
+      const hostname = parsedUrl.hostname.toLowerCase();
+      const bareHostname = hostname.startsWith('[') && hostname.endsWith(']')
+        ? hostname.slice(1, -1)
+        : hostname;
+
+      // Phase 1: Synchronous check for bare IP addresses
+      if (isBareIPAddress(bareHostname)) {
+        if (isPrivateIP(bareHostname)) {
+          throw new Error('Requests to private/internal addresses are not allowed');
+        }
       }
+      // For domain names, the async DNS check happens in the fetch execution below
 
       fetchState.requestCount++;
       logs.push(`[INFO] fetch: ${options.method || 'GET'} ${url}`);
@@ -658,6 +685,16 @@ function injectFetch(context: QuickJSContext, logs: string[], fetchState: FetchS
       // Execute the actual fetch
       fetchEntry.promise = (async () => {
         try {
+          // Phase 2: Async DNS resolution check for domain names
+          // This prevents DNS rebinding attacks where the hostname resolves
+          // to a different IP than what was checked in Phase 1
+          if (!isBareIPAddress(bareHostname)) {
+            const ssrfCheck = await validateUrlForSSRF(url);
+            if (!ssrfCheck.safe) {
+              throw new Error(ssrfCheck.error || 'Requests to private/internal addresses are not allowed');
+            }
+          }
+
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 

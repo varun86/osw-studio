@@ -11,6 +11,17 @@
 
 import { EdgeFunction, ServerFunction, Secret, ScheduledFunction } from '../types';
 import cronParser from 'cron-parser';
+// esbuild is server-only (uses native binaries), so we lazy-import to avoid
+// bundling it into the client where it would fail at runtime.
+let validateJavaScriptSyntax: typeof import('@/lib/security/syntax-validator').validateJavaScriptSyntax | undefined;
+
+async function getSyntaxValidator() {
+  if (!validateJavaScriptSyntax) {
+    const mod = await import('@/lib/security/syntax-validator');
+    validateJavaScriptSyntax = mod.validateJavaScriptSyntax;
+  }
+  return validateJavaScriptSyntax;
+}
 
 // ============================================
 // Type Definitions
@@ -168,7 +179,7 @@ const RESERVED_SERVER_FUNCTION_NAMES = [
 /**
  * Validate edge function data before saving
  */
-export function validateEdgeFunctionData(data: unknown): ValidationResult {
+export async function validateEdgeFunctionData(data: unknown): Promise<ValidationResult> {
   const errors: string[] = [];
 
   if (!data || typeof data !== 'object') {
@@ -192,15 +203,17 @@ export function validateEdgeFunctionData(data: unknown): ValidationResult {
     errors.push(`Method must be one of: ${validMethods.join(', ')}`);
   }
 
-  // Code validation
+  // Code validation — uses safe syntax validator (not new Function())
+  // to prevent code execution in the Node.js context during validation
   if (!fn.code || typeof fn.code !== 'string') {
     errors.push('Missing or invalid "code" field');
   } else {
-    try {
-      new Function(fn.code);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      errors.push(`JavaScript syntax error: ${message}`);
+    const validator = await getSyntaxValidator();
+    if (validator) {
+      const result = validator(fn.code);
+      if (!result.valid && result.error) {
+        errors.push(result.error);
+      }
     }
   }
 
@@ -224,7 +237,7 @@ export function validateEdgeFunctionData(data: unknown): ValidationResult {
 /**
  * Validate server function data before saving
  */
-export function validateServerFunctionData(data: unknown): ValidationResult {
+export async function validateServerFunctionData(data: unknown): Promise<ValidationResult> {
   const errors: string[] = [];
 
   if (!data || typeof data !== 'object') {
@@ -242,15 +255,17 @@ export function validateServerFunctionData(data: unknown): ValidationResult {
     errors.push(`Cannot use reserved name: ${fn.name}`);
   }
 
-  // Code validation
+  // Code validation — uses safe syntax validator with parameter names
+  // matching the server function execution context
   if (!fn.code || typeof fn.code !== 'string') {
     errors.push('Missing or invalid "code" field');
   } else {
-    try {
-      new Function('args', 'db', 'fetch', 'console', fn.code);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      errors.push(`JavaScript syntax error: ${message}`);
+    const validator = await getSyntaxValidator();
+    if (validator) {
+      const result = validator(fn.code, ['args', 'db', 'fetch', 'console']);
+      if (!result.valid && result.error) {
+        errors.push(result.error);
+      }
     }
   }
 

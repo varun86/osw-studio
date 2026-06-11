@@ -42,8 +42,18 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ================================================================
+   CINEMATIC MATTE GLASS VISUAL OS v4.0
+   ================================================================
+   Design DNA: Premium Cinematic Matte Glass aesthetic
+   Philosophy: Layered darkness with purposeful light
+   Personality: Quiet Intelligence
+   ================================================================ */
+
 :root {
-  --radius: 0.75rem;
+  --radius: 0.625rem; /* 10px — tighter radius for matte precision */
+
+  /* Light mode (preserved for accessibility, but dark-first design) */
   --background: oklch(0.98 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -75,91 +85,164 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
-  
-  /* Panel tint colors - Light mode */
-  --panel-assistant-tint: oklch(0.65 0.2 145 / 0.02); /* Green tint - weaker */
-  --panel-files-tint: oklch(0.6 0.15 220 / 0.02); /* Blue tint - weaker */
-  --panel-editor-tint: oklch(0.55 0.18 285 / 0.02); /* Purple tint - weaker */
-  --panel-preview-tint: oklch(0.7 0.2 45 / 0.02); /* Orange tint - weaker */
-  
-  /* Panel RGB values for headers */
-  --panel-files-rgb: 59, 130, 246; /* Blue */
-  --panel-editor-rgb: 147, 51, 234; /* Purple */
-  --panel-preview-rgb: 251, 146, 60; /* Orange */
-  
-  /* Project page tint colors - Light mode */
-  --project-card-tint: oklch(0.65 0.18 40 / 0.03); /* Subtle orange tint */
-  --project-background-tint: oklch(0.65 0.18 40 / 0.015); /* Very subtle orange tint */
-  
-  /* Sidebar button active colors - Light mode */
-  --button-assistant-active: oklch(0.65 0.2 145); /* Green (chat) */
-  --button-files-active: oklch(0.6 0.15 220); /* Blue */
-  --button-editor-active: oklch(0.55 0.18 285); /* Purple */
-  --button-preview-active: oklch(0.7 0.2 45); /* Orange */
-  --button-checkpoint-active: oklch(0.65 0.15 55); /* Warm amber */
 
-  /* Checkpoint panel */
-  --panel-checkpoint-rgb: 217, 119, 6; /* Amber */
+  --panel-assistant-tint: oklch(0.65 0.2 145 / 0.02);
+  --panel-files-tint: oklch(0.6 0.15 220 / 0.02);
+  --panel-editor-tint: oklch(0.55 0.18 285 / 0.02);
+  --panel-preview-tint: oklch(0.7 0.2 45 / 0.02);
+  --panel-files-rgb: 59, 130, 246;
+  --panel-editor-rgb: 147, 51, 234;
+  --panel-preview-rgb: 251, 146, 60;
+  --project-card-tint: oklch(0.65 0.18 40 / 0.03);
+  --project-background-tint: oklch(0.65 0.18 40 / 0.015);
+  --button-assistant-active: oklch(0.65 0.2 145);
+  --button-files-active: oklch(0.6 0.15 220);
+  --button-editor-active: oklch(0.55 0.18 285);
+  --button-preview-active: oklch(0.7 0.2 45);
+  --button-checkpoint-active: oklch(0.65 0.15 55);
+  --panel-checkpoint-rgb: 217, 119, 6;
 }
+
+/* ================================================================
+   DARK MODE — Cinematic Matte Glass Visual OS v4.0
+   ================================================================
+   Color DNA: 9Router base palette + cinematic red accent
+   Base Ladder: #0A0A0C → #101014 → #15151A → #1B1B20 → #1A1B20 → #212228
+   Primary: #C4343D (Cinematic Red)
+   Typography: #E9E6EC → #B8B2BF → rgba(255,255,255,0.62) → 0.45 → 0.28
+   Borders: rgba(255,255,255,0.05) standard, 0.04 soft, 0.08 bright, 0.15 glow
+   ================================================================ */
 
 .dark {
-  --background: oklch(0.10 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.18 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.70 0.22 40);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.25 0 0);
-  --muted-foreground: oklch(0.65 0 0);
-  --accent: oklch(0.30 0.03 40);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(0.30 0 0);
-  --input: oklch(0.30 0 0);
-  --ring: oklch(0.70 0.25 40);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-  
-  /* Panel tint colors - Dark mode */
-  --panel-assistant-tint: oklch(0.65 0.2 145 / 0.02); /* Green tint - weaker */
-  --panel-files-tint: oklch(0.6 0.15 220 / 0.02); /* Blue tint - weaker */
-  --panel-editor-tint: oklch(0.55 0.18 285 / 0.02); /* Purple tint - weaker */
-  --panel-preview-tint: oklch(0.7 0.2 45 / 0.02); /* Orange tint - weaker */
-  
-  /* Panel RGB values for headers */
-  --panel-files-rgb: 59, 130, 246; /* Blue */
-  --panel-editor-rgb: 147, 51, 234; /* Purple */
-  --panel-preview-rgb: 251, 146, 60; /* Orange */
-  
-  /* Project page tint colors - Dark mode */
-  --project-card-tint: oklch(0.65 0.18 40 / 0.04); /* Subtle orange tint */
-  --project-background-tint: oklch(0.65 0.18 40 / 0.02); /* Very subtle orange tint */
-  
-  /* Sidebar button active colors - Dark mode */
-  --button-assistant-active: oklch(0.65 0.2 145); /* Green (chat) */
-  --button-files-active: oklch(0.6 0.15 220); /* Blue */
-  --button-editor-active: oklch(0.55 0.18 285); /* Purple */
-  --button-preview-active: oklch(0.7 0.2 45); /* Orange */
-  --button-checkpoint-active: oklch(0.65 0.15 55); /* Warm amber */
+  /* === Base Color Ladder === */
+  --cmg-base-darkest: #0A0A0C;   /* Page background, deepest plane */
+  --cmg-base-dark: #101014;       /* Secondary background, sidebar */
+  --cmg-base-medium: #15151A;     /* Muted surfaces, input fields */
+  --cmg-base-light: #1B1B20;      /* Elevated surfaces, hover states */
+  --cmg-surface-primary: #1A1B20; /* Card surfaces, containers */
+  --cmg-surface-secondary: #212228; /* Highest elevation surfaces */
+
+  /* === Primary & Accent === */
+  --cmg-primary: #C4343D;           /* Cinematic Red - active nav, primary buttons, focus rings */
+  --cmg-primary-light: #E9A0A3;     /* Active nav text, tinted text overlays */
+  --cmg-destructive: #E5484D;       /* Error states, delete buttons */
+  --cmg-cinematic-red: #320A0A;     /* Deep red ambience */
+  --cmg-burgundy-glow: #481010;     /* Logo glow pulse */
+  --cmg-wine-shadow: #240707;       /* Deep shadow accent */
+  --cmg-soft-crimson: #611515;      /* Medium accent glow */
+
+  /* === Typography === */
+  --cmg-foreground: #E9E6EC;       /* Primary text */
+  --cmg-secondary-text: #B8B2BF;   /* Secondary text */
+  --cmg-muted-text: rgba(255,255,255,0.62); /* Navigation icons, inactive */
+  --cmg-tertiary-text: rgba(255,255,255,0.45); /* Section labels */
+  --cmg-quaternary-text: rgba(255,255,255,0.28); /* Disabled */
+  --cmg-label-text: #6A6471;       /* Uppercase tracking labels */
+  --cmg-entity-muted: #81798D;     /* Entity tags, metadata */
+
+  /* === Borders === */
+  --cmg-border-standard: rgba(255,255,255,0.05); /* Card borders, section dividers */
+  --cmg-border-soft: rgba(255,255,255,0.04);     /* Glass-soft borders */
+  --cmg-border-bright: rgba(255,255,255,0.08);   /* Active/hover borders */
+  --cmg-border-glow: rgba(255,255,255,0.15);     /* Hover state glow */
+
+  /* === Surface Materials === */
+  --cmg-glass-bg: rgba(26,27,32,0.92);         /* Glass panel backgrounds */
+  --cmg-glass-bg-strong: rgba(23,23,28,0.96);   /* High-opacity glass panels */
+  --cmg-surface-gradient-from: rgba(29,29,32,0.92);
+  --cmg-surface-gradient-to: rgba(18,18,22,0.96);
+
+  /* === Shadows === */
+  --cmg-shadow-border: 0 0 0 1px rgba(255,255,255,0.02);
+  --cmg-shadow-inner: inset 0 1px 0 rgba(255,255,255,0.04);
+  --cmg-shadow-soft: 0 10px 24px rgba(0,0,0,0.38), 0 20px 40px rgba(0,0,0,0.18);
+  --cmg-shadow-premium: 0 10px 24px rgba(0,0,0,0.38), 0 30px 60px rgba(0,0,0,0.22);
+  --cmg-shadow-cinematic: 0 10px 24px rgba(0,0,0,0.38), 0 30px 60px rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.02), inset 0 1px 0 rgba(255,255,255,0.04);
+  --cmg-shadow-red-glow: 0 0 140px rgba(85,10,10,0.14);
+
+  /* === Semantic Colors (shadcn/ui mapping) === */
+  --background: #0A0A0C;
+  --foreground: #E9E6EC;
+  --card: #1A1B20;
+  --card-foreground: #E9E6EC;
+  --popover: #1A1B20;
+  --popover-foreground: #E9E6EC;
+  --primary: #C4343D;
+  --primary-foreground: #E9E6EC;
+  --secondary: #212228;
+  --secondary-foreground: #B8B2BF;
+  --muted: #15151A;
+  --muted-foreground: rgba(255,255,255,0.62);
+  --accent: #1B1B20;
+  --accent-foreground: #E9E6EC;
+  --destructive: #E5484D;
+  --border: rgba(255,255,255,0.05);
+  --input: rgba(255,255,255,0.04);
+  --ring: #C4343D;
+  --chart-1: #C4343D;     /* Primary red */
+  --chart-2: #8B5CF6;     /* GitHub purple */
+  --chart-3: #06B6D4;     /* Website cyan */
+  --chart-4: #22C55E;     /* Code green */
+  --chart-5: #FACC15;     /* Dashboard yellow */
+
+  /* Sidebar */
+  --sidebar: #101014;
+  --sidebar-foreground: rgba(255,255,255,0.62);
+  --sidebar-primary: #C4343D;
+  --sidebar-primary-foreground: #E9E6EC;
+  --sidebar-accent: #1B1B20;
+  --sidebar-accent-foreground: #E9E6EC;
+  --sidebar-border: rgba(255,255,255,0.04);
+  --sidebar-ring: #C4343D;
+
+  /* Panel tint colors - Enhanced with cinematic glow */
+  --panel-assistant-tint: rgba(70,120,255,0.06); /* Blue-ish glow for AI */
+  --panel-files-tint: rgba(91,33,182,0.07);      /* Purple glow for files */
+  --panel-editor-tint: rgba(91,33,182,0.07);     /* Purple glow for code */
+  --panel-preview-tint: rgba(196,52,61,0.06);    /* Red glow for preview */
+
+  /* Panel RGB values for headers - Cinematic categories */
+  --panel-files-rgb: 139, 92, 246;    /* GitHub purple */
+  --panel-editor-rgb: 34, 197, 94;    /* Code green */
+  --panel-preview-rgb: 196, 52, 61;   /* Cinematic red */
+
+  /* Project page tint colors */
+  --project-card-tint: rgba(196,52,61,0.08);    /* Subtle red glow */
+  --project-background-tint: rgba(196,52,61,0.03); /* Very subtle red */
+
+  /* Sidebar button active colors - Cinematic accent */
+  --button-assistant-active: #8B5CF6;  /* GitHub purple */
+  --button-files-active: #06B6D4;      /* Website cyan */
+  --button-editor-active: #22C55E;     /* Code green */
+  --button-preview-active: #C4343D;    /* Cinematic red */
+  --button-checkpoint-active: #FACC15; /* Dashboard yellow */
 
   /* Checkpoint panel */
-  --panel-checkpoint-rgb: 217, 119, 6; /* Amber */
+  --panel-checkpoint-rgb: 250, 204, 21; /* Dashboard yellow */
+
+  /* Category colors for badges/indicators */
+  --cmg-cat-github: #8B5CF6;
+  --cmg-cat-website: #06B6D4;
+  --cmg-cat-docs: #3B82F6;
+  --cmg-cat-error: #EF4444;
+  --cmg-cat-dashboard: #FACC15;
+  --cmg-cat-code: #22C55E;
+  --cmg-cat-chat: #EC4899;
+  --cmg-cat-social: #6366F1;
+  --cmg-cat-terminal: #94A3B8;
+  --cmg-cat-shopping: #F97316;
+  --cmg-cat-misc: #14B8A6;
+
+  /* Status colors */
+  --cmg-status-processed: #30A46C;
+  --cmg-status-processing: #F5A623;
+  --cmg-status-failed: #E5484D;
+  --cmg-status-discovered: rgba(255,255,255,0.62);
 }
+
+/* ================================================================
+   BASE LAYER — Cinematic Matte Glass Foundation
+   ================================================================ */
 
 @layer base {
   * {
@@ -173,6 +256,139 @@
   }
 }
 
+/* ================================================================
+   CINEMATIC AMBIENT LIGHTING — Applied to dark mode body
+   ================================================================
+   Three-point lighting: warm fill top-left, cool fill top-right,
+   vertical depth gradient, subtle vignette, 48px grid overlay
+   ================================================================ */
+
+.dark body {
+  background:
+    /* Top-left warm fill light (orange tint, 4% opacity) */
+    radial-gradient(circle at top left, rgba(255,120,40,0.04), transparent 22%),
+    /* Top-right cool fill light (purple tint, 3% opacity) */
+    radial-gradient(circle at top right, rgba(220,90,255,0.03), transparent 25%),
+    /* Vertical depth gradient */
+    linear-gradient(180deg, #111114, #0c0c0f 45%, #0A0A0C);
+  background-attachment: fixed;
+  color: var(--cmg-foreground);
+}
+
+/* Vignette overlay — creates natural focus at center */
+.dark body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.30) 100%);
+}
+
+/* Subtle grid overlay — 48px, 60% opacity, premium dev-tool aesthetic */
+.dark body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* ================================================================
+   CINEMATIC MATTE GLASS SURFACE MATERIALS
+   ================================================================
+   Three glass grades: Standard (0.92), Soft (0.88), Strong (0.96)
+   All use 16px blur (matte, NOT frosted 40px+)
+   ================================================================ */
+
+/* Glass Standard — Sidebar, toolbars, standard panels */
+.cmg-glass {
+  background: var(--cmg-glass-bg);
+  backdrop-filter: blur(16px) saturate(110%);
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  border: 1px solid var(--cmg-border-standard);
+  box-shadow: var(--cmg-shadow-inner);
+}
+
+/* Glass-Soft — Lightweight overlays, tooltips */
+.cmg-glass-soft {
+  background: rgba(33,34,40,0.88);
+  backdrop-filter: blur(16px) saturate(110%);
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  border: 1px solid var(--cmg-border-soft);
+}
+
+/* Glass-Strong — Detail panels, modal surfaces */
+.cmg-glass-strong {
+  background: var(--cmg-glass-bg-strong);
+  backdrop-filter: blur(16px) saturate(110%);
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  border: 1px solid var(--cmg-border-standard);
+  box-shadow: var(--cmg-shadow-inner);
+}
+
+/* Cinematic card — full shadow stack with ambient glow */
+.cmg-card {
+  background: linear-gradient(180deg, var(--cmg-surface-gradient-from), var(--cmg-surface-gradient-to));
+  backdrop-filter: blur(16px) saturate(110%);
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  border: 1px solid var(--cmg-border-standard);
+  box-shadow: var(--cmg-shadow-cinematic);
+  border-radius: var(--radius);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Card ambient glow — top-left key light, category-tinted */
+.cmg-card::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.06), transparent 72%);
+  filter: blur(22px);
+  pointer-events: none;
+}
+
+/* Card hover border trace animation */
+.cmg-card-hover {
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.cmg-card-hover:hover {
+  border-color: var(--cmg-border-bright);
+  box-shadow: var(--cmg-shadow-cinematic), 0 0 20px rgba(196,52,61,0.04);
+}
+
+/* ================================================================
+   HOVER BORDER TRACE ANIMATION
+   ================================================================
+   Simulates rim light traveling around card perimeter
+   ================================================================ */
+
+@keyframes hover-border-trace {
+  0% { background-position: 0% 0%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 0%; }
+}
+
+.cmg-border-trace:hover {
+  border-image: linear-gradient(90deg, transparent, rgba(196,52,61,0.3), transparent) 1;
+  animation: hover-border-trace 3s linear infinite;
+}
+
+/* ================================================================
+   NOISY BACKGROUND TEXTURE
+   ================================================================ */
+
 .background__noisy {
   @apply bg-blend-normal pointer-events-none opacity-90;
   background-size: 25vw auto;
@@ -180,8 +396,236 @@
   @apply fixed w-screen h-screen -z-1 top-0 left-0;
 }
 
+/* ================================================================
+   DARK MODE COMPONENT OVERRIDES
+   ================================================================ */
 
-/* Override any Monaco Editor default dark styles in light mode */
+/* Sidebar — dark glass with inner highlight */
+.dark [data-sidebar] {
+  background: rgba(16,16,20,0.96) !important;
+  backdrop-filter: blur(16px) saturate(110%);
+  -webkit-backdrop-filter: blur(16px) saturate(110%);
+  border-right: 1px solid var(--cmg-border-soft);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.02);
+}
+
+/* Cards in dark mode */
+.dark [data-slot="card"] {
+  background: linear-gradient(180deg, var(--cmg-surface-gradient-from), var(--cmg-surface-gradient-to)) !important;
+  border: 1px solid var(--cmg-border-standard) !important;
+  box-shadow: var(--cmg-shadow-cinematic) !important;
+}
+
+/* Input fields in dark mode — subtle matte glass */
+.dark input,
+.dark textarea,
+.dark select {
+  background: #15151A !important;
+  border: 1px solid var(--cmg-border-soft) !important;
+  box-shadow: var(--cmg-shadow-inner) !important;
+}
+.dark input:focus,
+.dark textarea:focus,
+.dark select:focus {
+  border-color: var(--cmg-primary) !important;
+  box-shadow: var(--cmg-shadow-inner), 0 0 0 1px rgba(196,52,61,0.25) !important;
+}
+
+/* Buttons — cinematic red primary */
+.dark .btn-primary,
+.dark button[class*="bg-primary"] {
+  background: #C4343D !important;
+  color: #E9E6EC !important;
+  box-shadow: 0 4px 12px rgba(196,52,61,0.25), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+  transition: all 0.2s ease;
+}
+.dark .btn-primary:hover,
+.dark button[class*="bg-primary"]:hover {
+  background: #D43D46 !important;
+  box-shadow: 0 6px 16px rgba(196,52,61,0.35), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+  transform: translateY(-0.5px);
+}
+
+/* Dialog/Modal overlays — matte glass */
+.dark [data-radix-dialog-overlay],
+.dark [data-slot="dialog-overlay"] {
+  background: rgba(10,10,12,0.80) !important;
+  backdrop-filter: blur(8px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(110%) !important;
+}
+
+.dark [data-slot="dialog-content"] {
+  background: var(--cmg-glass-bg-strong) !important;
+  backdrop-filter: blur(16px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(110%) !important;
+  border: 1px solid var(--cmg-border-standard) !important;
+  box-shadow: var(--cmg-shadow-cinematic) !important;
+}
+
+/* Dropdown menus — glass soft */
+.dark [data-radix-dropdown-menu-content],
+.dark [data-slot="dropdown-menu-content"] {
+  background: var(--cmg-glass-bg-strong) !important;
+  backdrop-filter: blur(16px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(110%) !important;
+  border: 1px solid var(--cmg-border-standard) !important;
+  box-shadow: var(--cmg-shadow-premium) !important;
+}
+
+/* Popover — glass */
+.dark [data-radix-popover-content],
+.dark [data-slot="popover-content"] {
+  background: var(--cmg-glass-bg-strong) !important;
+  backdrop-filter: blur(16px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(110%) !important;
+  border: 1px solid var(--cmg-border-standard) !important;
+  box-shadow: var(--cmg-shadow-premium) !important;
+}
+
+/* Tooltip — glass soft */
+.dark [data-radix-tooltip-content],
+.dark [data-slot="tooltip-content"] {
+  background: rgba(33,34,40,0.96) !important;
+  backdrop-filter: blur(16px) saturate(110%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(110%) !important;
+  border: 1px solid var(--cmg-border-soft) !important;
+  box-shadow: var(--cmg-shadow-soft) !important;
+  color: var(--cmg-secondary-text) !important;
+}
+
+/* Panel headers — matte glass with inner highlight */
+.dark .panel-header,
+.dark [data-panel-header] {
+  background: rgba(21,21,26,0.92) !important;
+  border-bottom: 1px solid var(--cmg-border-soft) !important;
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.02) !important;
+}
+
+/* Tabs — cinematic underline style */
+.dark [data-radix-tabs-trigger] {
+  color: var(--cmg-muted-text) !important;
+  border-bottom: 2px solid transparent !important;
+  transition: all 0.2s ease;
+}
+.dark [data-radix-tabs-trigger][data-state="active"] {
+  color: var(--cmg-foreground) !important;
+  border-bottom-color: var(--cmg-primary) !important;
+}
+
+/* Scrollbar — thin, subtle, dark */
+.dark ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+/* Toast/Sonner — glass treatment */
+.dark [data-sonner-toaster] {
+  --normal-bg: rgba(26,27,32,0.96) !important;
+  --normal-border: rgba(255,255,255,0.05) !important;
+  --normal-text: #E9E6EC !important;
+}
+
+/* ================================================================
+   TYPOGRAPHY — Cinematic Text Hierarchy
+   ================================================================
+   Foreground: #E9E6EC (headings, values)
+   Secondary: #B8B2BF (body copy, descriptions)
+   Muted: rgba(255,255,255,0.62) (navigation, inactive)
+   Tertiary: rgba(255,255,255,0.45) (helper text)
+   Quaternary: rgba(255,255,255,0.28) (disabled)
+   Label: #6A6471 (uppercase tracking labels)
+   ================================================================ */
+
+.dark h1, .dark h2, .dark h3 {
+  color: var(--cmg-foreground);
+  letter-spacing: -0.02em;
+}
+
+.dark p, .dark li, .dark td {
+  color: var(--cmg-secondary-text);
+}
+
+.dark .text-muted-foreground {
+  color: var(--cmg-muted-text) !important;
+}
+
+.dark label, .dark .text-label {
+  color: var(--cmg-label-text);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+/* ================================================================
+   CINEMATIC RED ACCENT GLOW AREAS
+   ================================================================ */
+/* Use for brand emphasis areas, logo backgrounds, hero sections */
+
+.cmg-red-glow {
+  box-shadow: var(--cmg-shadow-red-glow);
+}
+
+.cmg-red-glow-subtle {
+  box-shadow: 0 0 80px rgba(85,10,10,0.08);
+}
+
+/* ================================================================
+   CATEGORY GLOW VARIANTS
+   ================================================================ */
+/* Apply per-card category tint via ::before glow color */
+
+.cmg-glow-github::before { background: radial-gradient(circle, rgba(91,33,182,0.18), transparent 72%); }
+.cmg-glow-website::before { background: radial-gradient(circle, rgba(14,116,144,0.18), transparent 72%); }
+.cmg-glow-docs::before { background: radial-gradient(circle, rgba(29,78,216,0.18), transparent 72%); }
+.cmg-glow-error::before { background: radial-gradient(circle, rgba(185,28,28,0.18), transparent 72%); }
+.cmg-glow-dashboard::before { background: radial-gradient(circle, rgba(161,98,7,0.18), transparent 72%); }
+.cmg-glow-code::before { background: radial-gradient(circle, rgba(21,128,61,0.18), transparent 72%); }
+.cmg-glow-chat::before { background: radial-gradient(circle, rgba(190,24,93,0.18), transparent 72%); }
+.cmg-glow-social::before { background: radial-gradient(circle, rgba(67,56,202,0.18), transparent 72%); }
+.cmg-glow-terminal::before { background: radial-gradient(circle, rgba(71,85,105,0.18), transparent 72%); }
+.cmg-glow-shopping::before { background: radial-gradient(circle, rgba(194,65,12,0.18), transparent 72%); }
+.cmg-glow-misc::before { background: radial-gradient(circle, rgba(15,118,110,0.18), transparent 72%); }
+
+/* ================================================================
+   STATUS BADGES
+   ================================================================ */
+
+.cmg-badge-processed {
+  background: rgba(48,164,108,0.12);
+  border: 1px solid rgba(48,164,108,0.25);
+  color: #30A46C;
+}
+.cmg-badge-processing {
+  background: rgba(245,166,35,0.12);
+  border: 1px solid rgba(245,166,35,0.25);
+  color: #F5A623;
+}
+.cmg-badge-failed {
+  background: rgba(229,72,77,0.12);
+  border: 1px solid rgba(229,72,77,0.25);
+  color: #E5484D;
+}
+.cmg-badge-discovered {
+  background: rgba(129,121,141,0.12);
+  border: 1px solid rgba(129,121,141,0.25);
+  color: rgba(255,255,255,0.62);
+}
+
+/* ================================================================
+   MONACO EDITOR — Dark mode cinematic treatment
+   ================================================================ */
+
 .light .monaco-editor .margin,
 .light .monaco-editor .monaco-editor-background,
 .light .monaco-editor {
@@ -191,8 +635,12 @@
 .dark .monaco-editor .margin,
 .dark .monaco-editor .monaco-editor-background,
 .dark .monaco-editor {
-  background-color: #1e1e1e !important;
+  background-color: #0F0F13 !important;
 }
+
+/* ================================================================
+   ANIMATIONS — Spring-physics with cinematic damping
+   ================================================================ */
 
 .matched-line {
   @apply bg-sky-500/30;
@@ -260,6 +708,54 @@
   bottom: -2px;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: 0 0 0 4px oklch(0.70 0.22 40);
+  box-shadow: 0 0 0 4px #C4343D;
   animation: pulse-opacity 2s ease-in-out infinite;
+}
+
+/* ================================================================
+   BREATHING ANIMATION — Subtle scale pulse for ambient elements
+   ================================================================ */
+
+@keyframes cmg-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.06; }
+  50% { transform: scale(1.008); opacity: 0.09; }
+}
+
+.cmg-breathe {
+  animation: cmg-breathe 4s ease-in-out infinite;
+}
+
+/* ================================================================
+   FLOATING ANIMATION — Gentle Y-axis oscillation
+   ================================================================ */
+
+@keyframes cmg-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-2px); }
+}
+
+.cmg-float {
+  animation: cmg-float 6s ease-in-out infinite;
+}
+
+/* ================================================================
+   SPRING TRANSITION — Damping ratio 22-30
+   ================================================================ */
+
+.cmg-spring {
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.3s ease,
+              box-shadow 0.3s ease;
+}
+
+/* ================================================================
+   EDGE LIGHT — Inset top highlight on hover
+   ================================================================ */
+
+.cmg-edge-light {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  transition: box-shadow 0.3s ease;
+}
+.cmg-edge-light:hover {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 12px rgba(255,255,255,0.02);
 }

@@ -3,6 +3,12 @@ import { ProviderId, ProviderModel, CodexAuthData, HFAuthData } from '@/lib/llm/
 import { getDefaultModel } from '@/lib/llm/providers/registry';
 import { UsageInfo } from '@/lib/llm/types';
 
+// Server-side API key storage interface
+export interface ServerKeyHint {
+  provider: string;
+  keyHint: string;
+}
+
 export interface SessionCost {
   sessionId: string;
   startTime: Date;
@@ -69,6 +75,19 @@ export interface AppSettings {
 
 class ConfigManager {
   private readonly STORAGE_KEY = 'osw-studio-settings';
+  /** Cached server-side key hints (provider → last-4-chars). Populated by fetchServerKeyHints(). */
+  private _serverKeyHints: Record<string, string> = {};
+  /** Whether we've attempted to fetch server key hints in this session. */
+  private _serverKeyHintsFetched = false;
+
+  /**
+   * Check if running in server mode (multi-user with auth).
+   * In server mode, API keys are stored encrypted on the server side.
+   * In desktop mode, API keys stay in localStorage.
+   */
+  isServerMode(): boolean {
+    return process.env.NEXT_PUBLIC_SERVER_MODE === 'true';
+  }
 
   getSettings(): AppSettings {
     if (typeof window === 'undefined') {
@@ -150,7 +169,24 @@ class ConfigManager {
     this.setSetting('selectedProvider', provider);
   }
 
+  /**
+   * Get a provider API key from localStorage.
+   *
+   * @deprecated In server mode, API keys are stored server-side and should NOT
+   * be read from localStorage. Use `hasProviderApiKey()` for existence checks
+   * and `getProviderApiKeyHint()` for display. The API routes will automatically
+   * look up server-side keys when the client doesn't send one.
+   *
+   * This method still returns the key from localStorage for backward
+   * compatibility during migration and for desktop mode.
+   */
   getProviderApiKey(provider: ProviderId): string | null {
+    // In server mode, do not return API keys from localStorage — they should
+    // only exist on the server. Return null so callers fall through to the
+    // server-side key lookup path in API routes.
+    if (this.isServerMode()) {
+      return null;
+    }
     const settings = this.getSettings();
     if (settings.providerKeys?.[provider]) {
       return settings.providerKeys[provider];
@@ -161,7 +197,46 @@ class ConfigManager {
     return null;
   }
 
+  /**
+   * Check if an API key is stored for a provider (without revealing the key).
+   * In server mode, checks the cached server-side hints.
+   * In desktop mode, checks localStorage.
+   */
+  hasProviderApiKey(provider: ProviderId): boolean {
+    if (this.isServerMode()) {
+      return !!this._serverKeyHints[provider];
+    }
+    return !!this.getProviderApiKey(provider);
+  }
+
+  /**
+   * Get the display hint (last 4 chars) for a provider's API key.
+   * In server mode, returns from cached server-side hints.
+   * In desktop mode, derives from the localStorage key.
+   */
+  getProviderApiKeyHint(provider: ProviderId): string | null {
+    if (this.isServerMode()) {
+      const hint = this._serverKeyHints[provider];
+      return hint || null;
+    }
+    const key = this.getProviderApiKey(provider);
+    if (!key) return null;
+    return key.length >= 4 ? key.slice(-4) : '****';
+  }
+
+  /**
+   * Set a provider API key.
+   * In server mode, stores the key encrypted on the server via /api/user/keys.
+   * In desktop mode, stores in localStorage.
+   */
   setProviderApiKey(provider: ProviderId, key: string): void {
+    if (this.isServerMode() && key) {
+      // Fire-and-forget server-side storage — don't block the UI
+      this._storeApiKeyServer(provider, key);
+      // Update the cached hint immediately for responsive UI
+      this._serverKeyHints[provider] = key.length >= 4 ? key.slice(-4) : '****';
+    }
+    // Always update localStorage for desktop mode and backward compatibility
     const settings = this.getSettings();
     const providerKeys = settings.providerKeys || {};
     providerKeys[provider] = key;
@@ -170,6 +245,168 @@ class ConfigManager {
     if (provider === 'openrouter') {
       this.setSetting('openRouterApiKey', key);
     }
+
+    // In server mode, remove the key from localStorage after saving to server
+    if (this.isServerMode() && key) {
+      this._removeApiKeyFromLocalStorage(provider);
+    }
+  }
+
+  /**
+   * Remove a provider API key.
+   * In server mode, deletes from the server-side store.
+   * In desktop mode, removes from localStorage.
+   */
+  removeProviderApiKey(provider: ProviderId): void {
+    if (this.isServerMode()) {
+      // Fire-and-forget server-side deletion
+      this._deleteApiKeyServer(provider);
+      delete this._serverKeyHints[provider];
+    }
+    // Remove from localStorage
+    const settings = this.getSettings();
+    const providerKeys = settings.providerKeys || {};
+    delete providerKeys[provider];
+    this.setSetting('providerKeys', providerKeys);
+    if (provider === 'openrouter') {
+      this.setSetting('openRouterApiKey', '');
+    }
+  }
+
+  /**
+   * Fetch stored API key hints from the server.
+   * Call this after login to populate the hints cache.
+   */
+  async fetchServerKeyHints(): Promise<void> {
+    if (!this.isServerMode() || typeof window === 'undefined') return;
+    if (this._serverKeyHintsFetched) return;
+
+    try {
+      const response = await fetch('/api/user/keys');
+      if (response.ok) {
+        const data = await response.json();
+        const hints: Record<string, string> = {};
+        for (const key of data.keys || []) {
+          hints[key.provider] = key.keyHint;
+        }
+        this._serverKeyHints = hints;
+        this._serverKeyHintsFetched = true;
+      }
+    } catch {
+      // Silently fail — will retry on next access
+    }
+  }
+
+  /**
+   * Migrate API keys from localStorage to server-side encrypted storage.
+   * Sends all existing providerKeys to /api/user/keys, then removes them
+   * from localStorage. Returns the list of successfully migrated providers.
+   *
+   * Should be called once after login when the user has localStorage keys.
+   */
+  async migrateApiKeysToServer(): Promise<string[]> {
+    if (!this.isServerMode() || typeof window === 'undefined') return [];
+
+    const settings = this.getSettings();
+    const providerKeys = settings.providerKeys || {};
+    const keysToMigrate: Record<string, string> = {};
+
+    // Collect non-empty keys that haven't already been migrated
+    for (const [provider, key] of Object.entries(providerKeys)) {
+      if (key && typeof key === 'string' && key.trim()) {
+        // Skip if already stored server-side
+        if (!this._serverKeyHints[provider]) {
+          keysToMigrate[provider] = key;
+        }
+      }
+    }
+
+    // Also check openRouterApiKey (legacy field)
+    if (settings.openRouterApiKey && !keysToMigrate['openrouter'] && !this._serverKeyHints['openrouter']) {
+      keysToMigrate['openrouter'] = settings.openRouterApiKey;
+    }
+
+    if (Object.keys(keysToMigrate).length === 0) return [];
+
+    try {
+      const response = await fetch('/api/user/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'migrate',
+          providerKeys: keysToMigrate,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const migratedProviders: string[] = (data.migrated || []).map((m: { provider: string; keyHint: string }) => m.provider);
+
+        // Update cached hints
+        for (const m of data.migrated || []) {
+          this._serverKeyHints[m.provider] = m.keyHint;
+        }
+
+        // Remove migrated keys from localStorage
+        for (const provider of migratedProviders) {
+          this._removeApiKeyFromLocalStorage(provider as ProviderId);
+        }
+
+        return migratedProviders;
+      }
+    } catch {
+      // Migration failed — keys remain in localStorage as fallback
+    }
+    return [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers for server-side key storage
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Store an API key on the server. Fire-and-forget.
+   */
+  private async _storeApiKeyServer(provider: string, apiKey: string): Promise<void> {
+    try {
+      await fetch('/api/user/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, apiKey }),
+      });
+    } catch {
+      // Silently fail — key is also in localStorage as fallback
+    }
+  }
+
+  /**
+   * Delete an API key from the server. Fire-and-forget.
+   */
+  private async _deleteApiKeyServer(provider: string): Promise<void> {
+    try {
+      await fetch('/api/user/keys', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+    } catch {
+      // Silently fail
+    }
+  }
+
+  /**
+   * Remove an API key from localStorage without triggering server calls.
+   */
+  private _removeApiKeyFromLocalStorage(provider: ProviderId): void {
+    if (typeof window === 'undefined') return;
+    const settings = this.getSettings();
+    const providerKeys = { ...(settings.providerKeys || {}) };
+    delete providerKeys[provider];
+    settings.providerKeys = providerKeys;
+    if (provider === 'openrouter') {
+      delete settings.openRouterApiKey;
+    }
+    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(settings));
   }
 
   getProviderModel(provider: ProviderId): string | null {

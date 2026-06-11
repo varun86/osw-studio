@@ -227,23 +227,10 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Generate anonymous session ID (same logic as pageview tracking)
+ * Generate anonymous session ID using crypto.randomUUID()
  */
-function generateSessionId(userAgent: string, request: NextRequest): string {
-  const forwarded = request.headers.get('x-forwarded-for');
-  const ip = forwarded ? forwarded.split(',')[0] : '';
-  const anonymizedIP = anonymizeIP(ip);
-
-  const fingerprint = `${userAgent}|${anonymizedIP}|${new Date().toDateString()}`;
-
-  let hash = 0;
-  for (let i = 0; i < fingerprint.length; i++) {
-    const char = fingerprint.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-
-  return Math.abs(hash).toString(36);
+function generateSessionId(_userAgent: string, _request: NextRequest): string {
+  return crypto.randomUUID();
 }
 
 function anonymizeIP(ip: string): string {

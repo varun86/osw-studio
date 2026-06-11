@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requireDeploymentAccess } from '@/lib/auth/deployment-access';
 import { getSQLiteAdapter } from '@/lib/vfs/adapters/server';
 
 interface EngagementMetrics {
@@ -37,16 +37,12 @@ export async function GET(
   { params }: { params: Promise<{ deploymentId: string }> }
 ) {
   try {
-    // Require authentication
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
     const { deploymentId } = await params;
+
+    // Require authentication + workspace access
+    const accessResult = await requireDeploymentAccess(deploymentId);
+    if (accessResult instanceof NextResponse) return accessResult;
+
     const { searchParams } = new URL(request.url);
     const days = parseInt(searchParams.get('days') || '30', 10);
 

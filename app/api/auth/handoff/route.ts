@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyHandoffToken, createSession, SESSION_COOKIE_NAME, SESSION_DURATION } from '@/lib/auth/session';
 import { getUserById, getUserDefaultWorkspace } from '@/lib/auth/system-database';
 import { ensureDefaultWorkspace } from '@/lib/auth/default-workspace';
+import { RateLimiter, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+// Rate limiting: 10 handoff attempts per IP per minute
+const handoffRateLimiter = new RateLimiter();
+const HANDOFF_RATE_LIMIT = { limit: 10, windowMs: 60 * 1000 }; // 10 per IP per minute
 
 const UUID_REGEX = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
@@ -11,23 +16,21 @@ function sanitizeRedirect(redirect: string): string {
   return redirect;
 }
 
-export async function GET(request: NextRequest) {
-  const token = request.nextUrl.searchParams.get('token');
-  const rawRedirect = request.nextUrl.searchParams.get('redirect') || '/';
-  const redirect = sanitizeRedirect(rawRedirect);
-
-  if (!token) {
-    return NextResponse.redirect(new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL || request.url));
-  }
+/**
+ * Helper to process a verified handoff token and create a session.
+ * Shared between GET (legacy) and POST (secure) handlers.
+ */
+async function processHandoff(request: NextRequest, token: string, redirectPath: string) {
+  const redirect = sanitizeRedirect(redirectPath);
 
   const result = await verifyHandoffToken(token);
   if (!result) {
-    return NextResponse.redirect(new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL || request.url));
+    return null;
   }
 
   const user = getUserById(result.userId);
   if (!user) {
-    return NextResponse.redirect(new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL || request.url));
+    return null;
   }
 
   // Ensure workspace is fully initialized (same as login flow)
@@ -61,4 +64,74 @@ export async function GET(request: NextRequest) {
   }
 
   return response;
+}
+
+/**
+ * POST handler — secure handoff with token in request body (not URL).
+ * This prevents token leakage via browser history, server logs, and Referer headers.
+ *
+ * Request body: { token: string, redirect?: string }
+ * Response: Redirect to the app with session cookie set
+ */
+export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const clientIp = getIdentifier(request);
+  if (!handoffRateLimiter.check(clientIp, HANDOFF_RATE_LIMIT)) {
+    const resetTime = handoffRateLimiter.getResetTime(clientIp, HANDOFF_RATE_LIMIT);
+    return NextResponse.json(
+      { error: 'Too many handoff attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(resetTime) } }
+    );
+  }
+
+  try {
+    const body = await request.json();
+    const { token, redirect } = body;
+
+    if (!token) {
+      return NextResponse.json({ error: 'Token is required' }, { status: 400 });
+    }
+
+    const result = await processHandoff(request, token, redirect || '/');
+    if (!result) {
+      return NextResponse.json({ error: 'Invalid or expired handoff token' }, { status: 401 });
+    }
+
+    return result;
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+}
+
+/**
+ * GET handler — legacy handoff with token in URL query parameter.
+ *
+ * SECURITY WARNING: Tokens in URLs can leak via browser history, server logs,
+ * and Referer headers. The POST handler above should be preferred.
+ * This GET handler is kept for backward compatibility with external auth providers
+ * that redirect users via URL.
+ */
+export async function GET(request: NextRequest) {
+  // Rate limiting check
+  const clientIp = getIdentifier(request);
+  if (!handoffRateLimiter.check(clientIp, HANDOFF_RATE_LIMIT)) {
+    const resetTime = handoffRateLimiter.getResetTime(clientIp, HANDOFF_RATE_LIMIT);
+    return NextResponse.redirect(
+      new URL(`/admin/login?error=rate_limited&retry_after=${resetTime}`, process.env.NEXT_PUBLIC_APP_URL || request.url)
+    );
+  }
+
+  const token = request.nextUrl.searchParams.get('token');
+  const rawRedirect = request.nextUrl.searchParams.get('redirect') || '/';
+
+  if (!token) {
+    return NextResponse.redirect(new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL || request.url));
+  }
+
+  const result = await processHandoff(request, token, rawRedirect);
+  if (!result) {
+    return NextResponse.redirect(new URL('/admin/login', process.env.NEXT_PUBLIC_APP_URL || request.url));
+  }
+
+  return result;
 }

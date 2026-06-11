@@ -2,41 +2,24 @@
  * Sandboxed Database API for Edge Functions
  *
  * Provides a secure, limited interface to the deployment's SQLite database
- * for use within edge functions. Blocks access to system tables and
- * enforces query limits.
+ * for use within edge functions. Delegates validation to the centralized
+ * SQL validator module for consistent security enforcement.
+ *
+ * Security features:
+ * - Blocks access to all system and forbidden tables
+ * - Blocks dangerous SQL keywords (ATTACH, DETACH, PRAGMA, VACUUM, REINDEX)
+ * - Enforces query count limits per execution
+ * - Supports read-only mode for GET-request edge functions
+ * - Enforces SQL length limits
  */
 
 import { RuntimeDatabase } from '@/lib/vfs/adapters/runtime-database';
 import { DatabaseAPI, DatabaseAPIOptions } from './types';
-
-/**
- * Tables that edge functions cannot access
- * These contain system data, analytics, and function definitions
- */
-const FORBIDDEN_TABLES = [
-  'sqlite_',        // SQLite internal tables
-  '_migrations',    // Migration tracking
-  'site_info',      // Site configuration
-  'edge_functions', // Function definitions
-  'function_logs',  // Execution logs
-  'server_functions', // Server function definitions
-  'secrets',        // Encrypted secrets
-  'pageviews',      // Analytics
-  'interactions',   // Analytics
-  'sessions',       // Analytics
-  'files',          // VFS files
-  'file_tree_nodes', // VFS tree
-];
-
-/**
- * DDL keywords that modify schema
- */
-const DDL_KEYWORDS = ['create', 'drop', 'alter', 'truncate'];
-
-/**
- * Dangerous keywords that should never be allowed
- */
-const DANGEROUS_KEYWORDS = ['attach', 'detach', 'vacuum', 'reindex'];
+import {
+  validateEdgeFunctionSQL,
+  MAX_SQL_LENGTH,
+  MAX_RESULT_ROWS,
+} from '@/lib/db/sql-validator';
 
 /**
  * Create a sandboxed database API for edge function use
@@ -54,56 +37,29 @@ export function createDatabaseAPI(
   const readOnly = options.readOnly ?? false;
 
   /**
-   * Validate SQL query for security
-   * Throws an error if the query is not allowed
+   * Execute a query and convert results to objects
    */
-  const validateSQL = (sql: string): void => {
-    const lowerSQL = sql.toLowerCase().trim();
-
-    // Check for dangerous keywords
-    for (const keyword of DANGEROUS_KEYWORDS) {
-      if (lowerSQL.includes(keyword)) {
-        throw new Error(`SQL keyword "${keyword}" is not allowed`);
-      }
-    }
-
-    // Block access to system tables
-    for (const table of FORBIDDEN_TABLES) {
-      // Check if the forbidden table name appears in the query
-      // Use word boundaries to avoid false positives
-      const tableRegex = new RegExp(`\\b${table.replace('_', '_?')}\\w*\\b`, 'i');
-      if (tableRegex.test(lowerSQL)) {
-        throw new Error(`Access to system table "${table}" is not allowed`);
-      }
-    }
-
-    // Block DDL in read-only mode
-    if (readOnly) {
-      for (const keyword of DDL_KEYWORDS) {
-        if (lowerSQL.startsWith(keyword)) {
-          throw new Error(`DDL statements (${keyword.toUpperCase()}) not allowed in read-only mode`);
-        }
-      }
-    }
-
+  const executeQuery = <T>(sql: string, params?: unknown[]): T[] => {
     // Check query count limit
     queryCount++;
     if (queryCount > maxQueries) {
       throw new Error(`Query limit exceeded (max ${maxQueries} queries per execution)`);
     }
-  };
 
-  /**
-   * Execute a query and convert results to objects
-   */
-  const executeQuery = <T>(sql: string, params?: unknown[]): T[] => {
-    validateSQL(sql);
+    // Delegate to centralized validator
+    const validation = validateEdgeFunctionSQL(sql, readOnly);
+    if (!validation.valid) {
+      throw new Error(validation.error);
+    }
 
     try {
       const result = deploymentDb.executeRawSQL(sql, params);
 
+      // Enforce row limit
+      const limitedRows = result.rows.slice(0, MAX_RESULT_ROWS);
+
       // Convert row arrays to objects
-      return result.rows.map(row => {
+      return limitedRows.map(row => {
         const obj: Record<string, unknown> = {};
         result.columns.forEach((col, i) => {
           obj[col] = row[i];
@@ -121,10 +77,20 @@ export function createDatabaseAPI(
    * Execute a statement that modifies data
    */
   const executeRun = (sql: string, params?: unknown[]): { changes: number; lastInsertRowid: number | bigint } => {
-    validateSQL(sql);
+    // Check query count limit
+    queryCount++;
+    if (queryCount > maxQueries) {
+      throw new Error(`Query limit exceeded (max ${maxQueries} queries per execution)`);
+    }
 
     if (readOnly) {
       throw new Error('Database is in read-only mode');
+    }
+
+    // Delegate to centralized validator
+    const validation = validateEdgeFunctionSQL(sql, readOnly);
+    if (!validation.valid) {
+      throw new Error(validation.error);
     }
 
     try {

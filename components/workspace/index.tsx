@@ -175,7 +175,7 @@ export function Workspace({ project, onBack, workspaceId }: WorkspaceProps) {
     const provider = configManager.getSelectedProvider();
     const config = getProvider(provider);
     if (config.isLocal) return true;
-    if (config.apiKeyRequired || config.usesOAuth) return !!configManager.getProviderApiKey(provider);
+    if (config.apiKeyRequired || config.usesOAuth) return configManager.hasProviderApiKey(provider);
     return true;
   }, [currentModel]);
   

@@ -2,16 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
 import { logger } from '@/lib/utils';
+import { requireAuth } from '@/lib/auth/session';
+import { getApiKey as getServerApiKey, isServerKeyStorageAvailable } from '@/lib/auth/api-key-store';
 
 export async function POST(request: NextRequest) {
+  // Require authentication — this endpoint proxies API keys to external providers
+  let session;
   try {
-    const { apiKey, provider } = await request.json();
+    session = await requireAuth();
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const { apiKey: clientApiKey, provider } = await request.json();
     
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider is required' },
         { status: 400 }
       );
+    }
+
+    let apiKey = clientApiKey;
+
+    // If no client-provided API key, try to fetch from server-side encrypted store
+    if (!apiKey && isServerKeyStorageAvailable()) {
+      try {
+        const serverKey = getServerApiKey(session.userId, provider as ProviderId);
+        if (serverKey) {
+          apiKey = serverKey;
+        }
+      } catch (err) {
+        logger.warn('[API/models] Failed to retrieve server-side API key:', err);
+      }
     }
 
     const providerConfig = getProvider(provider as ProviderId);

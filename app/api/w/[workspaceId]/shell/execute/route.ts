@@ -7,6 +7,7 @@
 import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
+import { validateRuntimeSQL, MAX_RESULT_ROWS } from '@/lib/db/sql-validator';
 
 interface ShellResult {
   stdout: string;
@@ -123,7 +124,7 @@ async function handleSqlite3(
       });
     }
 
-    // Execute the query
+    // Execute the query (executeUserQuery now uses centralized validator internally)
     const result = deploymentDb.executeUserQuery(query);
 
     if (result.error) {

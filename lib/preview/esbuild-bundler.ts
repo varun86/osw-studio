@@ -14,6 +14,7 @@
 
 import type { VirtualFile, ProjectRuntime } from '../vfs/types';
 import { getRuntimeConfig } from '@/lib/runtimes/registry';
+import { validateCdnUrl } from '@/lib/security/cdn-whitelist';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,16 +220,29 @@ function loaderForPath(p: string): string {
 // CDN compiler loading (Svelte, Vue)
 // ---------------------------------------------------------------------------
 
-// Dynamic import wrapper that bypasses Next.js bundler
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
-const dynamicImport = new Function('url', 'return import(url)') as (url: string) => Promise<any>;
+/**
+ * Safe dynamic import wrapper with CDN domain whitelist validation.
+ *
+ * Replaces the previous `new Function('url', 'return import(url)')` pattern
+ * which allowed importing from ANY URL — including attacker-controlled domains.
+ * Now only URLs from whitelisted CDN domains (esm.sh, cdn.jsdelivr.net) are
+ * allowed. See lib/security/cdn-whitelist.ts for the full domain list.
+ *
+ * We still use Function constructor for the dynamic import bypass (Next.js
+ * bundler rewrites bare import() calls), but now with URL validation BEFORE
+ * the import is performed.
+ */
+const safeDynamicImport = new Function('validateCdnUrl', 'url', `
+  validateCdnUrl(url);
+  return import(url);
+`) as (validateCdnUrl: (url: string) => void, url: string) => Promise<any>;
 
 const compilerCache = new Map<string, any>();
 
 async function loadCdnCompiler(url: string): Promise<any> {
   const cached = compilerCache.get(url);
   if (cached) return cached;
-  const mod = await dynamicImport(url);
+  const mod = await safeDynamicImport(validateCdnUrl, url);
   compilerCache.set(url, mod);
   return mod;
 }

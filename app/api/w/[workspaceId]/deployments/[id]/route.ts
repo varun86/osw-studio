@@ -63,9 +63,20 @@ export async function PUT(
       );
     }
 
+    // SECURITY: Use explicit allowlist instead of spreading the entire body
+    // to prevent mass assignment attacks (e.g., setting projectId, databaseEnabled, publishedAt)
+    const ALLOWED_UPDATE_FIELDS = ['name', 'slug', 'enabled', 'underConstruction', 'customDomain'] as const;
+
+    const updates: Record<string, unknown> = {};
+    for (const field of ALLOWED_UPDATE_FIELDS) {
+      if (field in body) {
+        updates[field] = body[field];
+      }
+    }
+
     const updatedDeployment = {
       ...existingDeployment,
-      ...body,
+      ...updates,
       id, // Ensure ID doesn't change
       updatedAt: new Date(),
     };

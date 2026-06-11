@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySession } from '@/lib/auth/session';
 import { taskManager, eventBus } from '@/lib/server-generate/singleton';
 import { runServerGeneration } from '@/lib/server-generate/server-orchestrator-runner';
+import { getApiKey as getServerApiKey, isServerKeyStorageAvailable } from '@/lib/auth/api-key-store';
 import type { StartGenerationRequest } from '@/lib/server-generate/types';
 
 export async function POST(request: NextRequest) {
@@ -22,9 +23,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  if (!body.projectId || !body.prompt || !body.model || !body.apiKey) {
+  if (!body.projectId || !body.prompt || !body.model) {
     return NextResponse.json(
-      { error: 'Missing required fields: projectId, prompt, model, apiKey' },
+      { error: 'Missing required fields: projectId, prompt, model' },
+      { status: 400 },
+    );
+  }
+
+  // Resolve API key: use client-provided key, or look up from server-side store
+  let apiKey = body.apiKey;
+  if (!apiKey && isServerKeyStorageAvailable()) {
+    const provider = body.providerConfig?.provider;
+    if (provider) {
+      try {
+        const serverKey = getServerApiKey(session.userId, provider);
+        if (serverKey) apiKey = serverKey;
+      } catch {}
+    }
+  }
+
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: 'API key is required. Please set it in settings.' },
       { status: 400 },
     );
   }
@@ -34,7 +54,7 @@ export async function POST(request: NextRequest) {
 
   let taskId: string;
   try {
-    taskId = taskManager.createTask(body.projectId, sessionId, body.apiKey, workspaceId);
+    taskId = taskManager.createTask(body.projectId, sessionId, apiKey, workspaceId);
   } catch (error) {
     if (error instanceof Error && error.message.includes('limit')) {
       return NextResponse.json({ error: error.message }, { status: 429 });

@@ -2,14 +2,44 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ProviderId } from '@/lib/llm/providers/types';
 import { getProvider } from '@/lib/llm/providers/registry';
 import { logger } from '@/lib/utils';
+import { requireAuth } from '@/lib/auth/session';
+import { getApiKey as getServerApiKey, isServerKeyStorageAvailable } from '@/lib/auth/api-key-store';
 
 export async function POST(request: NextRequest) {
+  // Require authentication — this endpoint validates API keys against external providers
+  let session;
   try {
-    const { apiKey, provider } = await request.json();
+    session = await requireAuth();
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const { apiKey: clientApiKey, provider } = await request.json();
     
-    if (!apiKey || !provider) {
+    if (!provider) {
       return NextResponse.json(
-        { error: 'API key and provider are required' },
+        { error: 'Provider is required' },
+        { status: 400 }
+      );
+    }
+
+    // Use client-provided key, or fall back to server-side stored key
+    let apiKey = clientApiKey;
+    if (!apiKey && isServerKeyStorageAvailable()) {
+      try {
+        const serverKey = getServerApiKey(session.userId, provider as ProviderId);
+        if (serverKey) {
+          apiKey = serverKey;
+        }
+      } catch (err) {
+        logger.warn('[API/validate-key] Failed to retrieve server-side API key:', err);
+      }
+    }
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'API key is required' },
         { status: 400 }
       );
     }

@@ -7,7 +7,9 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  const gatewayUrl = process.env.NEXT_PUBLIC_GATEWAY_URL;
+  // SECURITY: Do not render any gateway/redirect URLs on the client error page.
+  // The gateway URL is server-side only (GATEWAY_URL env var, not NEXT_PUBLIC_).
+  // Users can navigate back to the app manually or use the "Try again" button.
 
   return (
     <html>
@@ -43,22 +45,6 @@ export default function GlobalError({
             >
               Try again
             </button>
-            {gatewayUrl && (
-              <a
-                href={gatewayUrl}
-                style={{
-                  padding: '0.5rem 1.25rem',
-                  background: '#262626',
-                  color: '#e5e5e5',
-                  border: '1px solid #404040',
-                  borderRadius: '0.375rem',
-                  textDecoration: 'none',
-                  fontSize: '0.875rem',
-                }}
-              >
-                Back to account
-              </a>
-            )}
           </div>
         </div>
       </body>

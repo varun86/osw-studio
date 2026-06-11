@@ -574,8 +574,9 @@ export class MultiAgentOrchestrator {
     const provider = configManager.getSelectedProvider();
     const providerConfig = getProvider(provider);
     const apiKey = configManager.getProviderApiKey(provider);
+    const hasApiKey = configManager.hasProviderApiKey(provider);
     const model = configManager.getProviderModel(provider) || this.model || undefined;
-    if (providerConfig.apiKeyRequired && !apiKey && !providerConfig.usesOAuth) {
+    if (providerConfig.apiKeyRequired && !hasApiKey && !providerConfig.usesOAuth) {
       throw new Error(`API key not configured for provider: ${provider}`);
     }
     return { provider, apiKey: apiKey || '', model: model || 'default-model' };

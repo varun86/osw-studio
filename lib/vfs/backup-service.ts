@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { Project, VirtualFile } from './types';
 import { Checkpoint } from './checkpoint';
 import { logger } from '@/lib/utils';
+import { validateZipEntries, extractZipEntryInfo } from '@/lib/security/zip-bomb-protection';
 
 export interface BackupData {
   version: string;
@@ -98,6 +99,11 @@ export class BackupService {
       // Read and parse backup file
       const zip = new JSZip();
       const zipData = await zip.loadAsync(file);
+
+      // ZIP bomb protection: check entry sizes before extracting content
+      const entries = extractZipEntryInfo(zipData);
+      validateZipEntries(entries);
+
       const backupFile = zipData.file('backup.json');
       
       if (!backupFile) {
@@ -105,10 +111,13 @@ export class BackupService {
       }
 
       const backupJson = await backupFile.async('string');
-      const backupData: BackupData = JSON.parse(backupJson);
+      const backupData: BackupData = this.safeJsonParse(backupJson);
 
       // Validate backup data
       this.validateBackupData(backupData);
+
+      // SECURITY: Validate file paths in imported data
+      this.validateImportFilePaths(backupData);
 
       options.onProgress?.(30, 'Validating backup data...');
 
@@ -168,6 +177,15 @@ export class BackupService {
 
       const zip = new JSZip();
       const zipData = await zip.loadAsync(file);
+
+      // ZIP bomb protection
+      try {
+        const entries = extractZipEntryInfo(zipData);
+        validateZipEntries(entries);
+      } catch (err) {
+        return { valid: false, reason: (err as Error).message };
+      }
+
       const backupFile = zipData.file('backup.json');
       
       if (!backupFile) {
@@ -175,9 +193,12 @@ export class BackupService {
       }
 
       const backupJson = await backupFile.async('string');
-      const backupData: BackupData = JSON.parse(backupJson);
+      const backupData: BackupData = this.safeJsonParse(backupJson);
 
       this.validateBackupData(backupData);
+
+      // SECURITY: Validate file paths in backup data
+      this.validateImportFilePaths(backupData);
       
       return { valid: true, metadata: backupData.metadata };
     } catch (error) {
@@ -538,6 +559,102 @@ export class BackupService {
     
     if (backupVersion[0] > currentVersion[0]) {
       throw new Error(`Backup version ${data.version} is not compatible with current version ${this.BACKUP_VERSION}`);
+    }
+  }
+
+  /**
+   * SECURITY: Safely parse JSON, preventing prototype pollution.
+   * Strips __proto__, constructor, and prototype from parsed objects.
+   */
+  private static safeJsonParse(json: string): any {
+    const data = JSON.parse(json);
+    return BackupService.sanitizeObject(data);
+  }
+
+  /**
+   * Recursively strip prototype pollution keys from an object.
+   */
+  private static sanitizeObject(obj: any): any {
+    if (obj === null || typeof obj !== 'object') {
+      return obj;
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => BackupService.sanitizeObject(item));
+    }
+
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      // Block prototype pollution keys
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        continue;
+      }
+      sanitized[key] = BackupService.sanitizeObject(value);
+    }
+    return sanitized;
+  }
+
+  /**
+   * SECURITY: Validate file paths in imported backup data to prevent:
+   * - Path traversal (..)
+   * - Server directory access (/.server/)
+   * - Disallowed file extensions
+   * - Null bytes
+   */
+  private static validateImportFilePaths(data: BackupData): void {
+    // Allowed file extensions for imported files
+    const ALLOWED_EXTENSIONS = new Set([
+      // Web files
+      'html', 'htm', 'css', 'js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs',
+      // Data files
+      'json', 'yaml', 'yml', 'xml', 'csv', 'toml',
+      // Text/Markdown
+      'md', 'txt', 'rtf',
+      // Config
+      'env', 'gitignore', 'dockerignore', 'editorconfig',
+      // Images
+      'svg', 'ico', 'webp', 'png', 'jpg', 'jpeg', 'gif',
+      // Fonts
+      'woff', 'woff2', 'ttf', 'eot',
+      // Server-side
+      'sql',
+    ]);
+
+    // Also allow files with no extension (like Makefile, Dockerfile)
+    const ALLOWED_BASENAMES = new Set([
+      'Makefile', 'Dockerfile', 'Vagrantfile', 'Gemfile', 'Rakefile',
+      'Procfile', '.gitignore', '.env', '.env.local', '.env.production',
+      '.eslintrc', '.prettierrc', '.babelrc', '.editorconfig',
+    ]);
+
+    const files = data.databases?.vfs?.files;
+    if (!files || !Array.isArray(files)) return;
+
+    for (const file of files) {
+      const filePath: string = file.path || '';
+
+      // Reject paths with null bytes
+      if (filePath.includes('\0')) {
+        throw new Error(`Invalid backup: file path contains null bytes: ${filePath}`);
+      }
+
+      // Reject path traversal
+      if (filePath.includes('..')) {
+        throw new Error(`Invalid backup: file path contains path traversal (..): ${filePath}`);
+      }
+
+      // Reject server directory access
+      if (filePath.startsWith('/.server/') || filePath.startsWith('.server/')) {
+        throw new Error(`Invalid backup: file path accesses server directory: ${filePath}`);
+      }
+
+      // Validate file extension
+      const basename = filePath.split('/').pop() || '';
+      const extension = basename.includes('.') ? basename.split('.').pop()!.toLowerCase() : '';
+
+      if (!ALLOWED_BASENAMES.has(basename) && extension && !ALLOWED_EXTENSIONS.has(extension)) {
+        throw new Error(`Invalid backup: disallowed file extension ".${extension}" for path: ${filePath}`);
+      }
     }
   }
 

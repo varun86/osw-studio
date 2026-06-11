@@ -8,10 +8,11 @@
  */
 
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth/session';
+import { requireAdmin, verifyInstanceApiKey } from '@/lib/auth/session';
 import { getCoreDatabase } from '@/lib/vfs/adapters/sqlite-connection';
 import { getRequestStats, cleanupOldLogs } from '@/lib/logging/request-logger';
 import { getSystemDatabase } from '@/lib/auth/system-database';
+import { adminRateLimiter, RATE_LIMIT_CONFIG, getIdentifier } from '@/lib/analytics/rate-limiter';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -142,11 +143,24 @@ async function countDeploymentDatabases(): Promise<number> {
   return count;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    // Verify admin authentication
-    const session = await getSession();
-    if (!session || !session.isAdmin) {
+    // Rate limiting — 60 requests per minute per user
+    const identifier = getIdentifier(request);
+    if (!adminRateLimiter.check(identifier, RATE_LIMIT_CONFIG.admin)) {
+      const retryAfter = adminRateLimiter.getResetTime(identifier, RATE_LIMIT_CONFIG.admin);
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+      );
+    }
+
+    // Verify admin authentication (database-verified, not just JWT claim)
+    let session;
+    try {
+      const apiSession = verifyInstanceApiKey(request as any);
+      session = apiSession || await requireAdmin();
+    } catch {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

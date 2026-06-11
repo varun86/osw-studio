@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
 import { BackendFeatures } from '@/lib/vfs/types';
 import cronParser from 'cron-parser';
+import { validateRuntimeSQL } from '@/lib/db/sql-validator';
 
 export async function POST(
   request: NextRequest,
@@ -49,8 +50,15 @@ export async function POST(
       databaseSchemaApplied: false,
     };
 
-    // 2. Execute DDL schema
+    // 2. Execute DDL schema (validated through centralized validator)
     if (backendFeatures.databaseSchema) {
+      const validation = validateRuntimeSQL(backendFeatures.databaseSchema, {
+        allowDDL: true,
+        context: 'ProvisionDDL',
+      });
+      if (!validation.valid) {
+        return NextResponse.json({ error: `Invalid database schema: ${validation.error}` }, { status: 400 });
+      }
       deploymentDb.executeDDL(backendFeatures.databaseSchema);
       provisioned.databaseSchemaApplied = true;
     }

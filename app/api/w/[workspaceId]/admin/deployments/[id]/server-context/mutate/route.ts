@@ -77,11 +77,11 @@ export async function POST(
     }
 
     if (path.startsWith('/.server/edge-functions/') && path.endsWith('.json')) {
-      return handleEdgeFunctionUpdate(path, content, deploymentDb);
+      return await handleEdgeFunctionUpdate(path, content, deploymentDb);
     }
 
     if (path.startsWith('/.server/server-functions/') && path.endsWith('.json')) {
-      return handleServerFunctionUpdate(path, content, deploymentDb);
+      return await handleServerFunctionUpdate(path, content, deploymentDb);
     }
 
     if (path.startsWith('/.server/scheduled-functions/') && path.endsWith('.json')) {
@@ -188,7 +188,7 @@ function handleSecretUpdate(path: string, content: string, deploymentDb: Deploym
   });
 }
 
-function handleEdgeFunctionUpdate(path: string, content: string, deploymentDb: DeploymentDatabase): NextResponse<MutationResponse> {
+async function handleEdgeFunctionUpdate(path: string, content: string, deploymentDb: DeploymentDatabase): Promise<NextResponse<MutationResponse>> {
   let data: unknown;
   try {
     data = JSON.parse(content);
@@ -197,7 +197,7 @@ function handleEdgeFunctionUpdate(path: string, content: string, deploymentDb: D
     return NextResponse.json({ success: false, error: `Invalid JSON: ${message}` }, { status: 400 });
   }
 
-  const validation = validateEdgeFunctionData(data);
+  const validation = await validateEdgeFunctionData(data);
   if (!validation.valid) {
     return NextResponse.json({ success: false, error: `Validation failed: ${validation.errors.join('; ')}` }, { status: 400 });
   }
@@ -239,7 +239,7 @@ function handleEdgeFunctionUpdate(path: string, content: string, deploymentDb: D
   });
 }
 
-function handleServerFunctionUpdate(path: string, content: string, deploymentDb: DeploymentDatabase): NextResponse<MutationResponse> {
+async function handleServerFunctionUpdate(path: string, content: string, deploymentDb: DeploymentDatabase): Promise<NextResponse<MutationResponse>> {
   let data: unknown;
   try {
     data = JSON.parse(content);
@@ -248,7 +248,7 @@ function handleServerFunctionUpdate(path: string, content: string, deploymentDb:
     return NextResponse.json({ success: false, error: `Invalid JSON: ${message}` }, { status: 400 });
   }
 
-  const validation = validateServerFunctionData(data);
+  const validation = await validateServerFunctionData(data);
   if (!validation.valid) {
     return NextResponse.json({ success: false, error: `Validation failed: ${validation.errors.join('; ')}` }, { status: 400 });
   }

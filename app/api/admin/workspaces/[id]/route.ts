@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { requireAuth, verifyInstanceApiKey } from '@/lib/auth/session';
+import { requireAdmin, verifyInstanceApiKey } from '@/lib/auth/session';
 import {
   getWorkspaceById,
   updateWorkspace,
@@ -16,6 +16,21 @@ import {
   getSystemDatabase,
   getWorkspaceProjectCount,
 } from '@/lib/auth/system-database';
+import { internalErrorResponse } from '@/lib/security/error-response';
+import { adminRateLimiter, RATE_LIMIT_CONFIG, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+/** SECURITY (Step 51): Rate limit check for admin workspace detail routes */
+function checkRateLimit(request: NextRequest): NextResponse | null {
+  const identifier = getIdentifier(request);
+  if (!adminRateLimiter.check(identifier, RATE_LIMIT_CONFIG.admin)) {
+    const retryAfter = adminRateLimiter.getResetTime(identifier, RATE_LIMIT_CONFIG.admin);
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+    );
+  }
+  return null;
+}
 
 function getWorkspaceDeploymentCount(workspaceId: string): number {
   try {
@@ -73,12 +88,12 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
     const ws = getWorkspaceById(id);
@@ -104,7 +119,7 @@ export async function GET(
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to get workspace' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
 
@@ -112,12 +127,12 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
     const ws = getWorkspaceById(id);
@@ -139,7 +154,7 @@ export async function PUT(
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to update workspace' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
 
@@ -147,12 +162,12 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const { id } = await params;
     const ws = getWorkspaceById(id);
@@ -178,6 +193,6 @@ export async function DELETE(
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to delete workspace' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }

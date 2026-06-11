@@ -8,10 +8,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createSession } from '@/lib/auth/session';
 import { createUser, getUserByEmail, getUserCount, createWorkspace, setDefaultWorkspace, updateWorkspace } from '@/lib/auth/system-database';
 import { hashPassword } from '@/lib/auth/passwords';
+import { validatePassword } from '@/lib/auth/password-policy';
 import { logger } from '@/lib/utils';
 import { getSystemDatabase } from '@/lib/auth/system-database';
+import { RateLimiter, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+// Rate limiting: 3 registrations per IP per hour
+const registerRateLimiter = new RateLimiter();
+const REGISTER_RATE_LIMIT = { limit: 3, windowMs: 60 * 60 * 1000 }; // 3 per IP per hour
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check — before any registration logic
+  const clientIp = getIdentifier(request);
+  if (!registerRateLimiter.check(clientIp, REGISTER_RATE_LIMIT)) {
+    const resetTime = registerRateLimiter.getResetTime(clientIp, REGISTER_RATE_LIMIT);
+    return NextResponse.json(
+      { error: 'Too many registration attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(resetTime) } }
+    );
+  }
+
   try {
     const userCount = getUserCount();
     const isFirstUser = userCount === 0;
@@ -37,13 +53,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid email format' }, { status: 400 });
     }
 
-    if (password.length < 8) {
-      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    // Enforce password policy: min 12 chars, max 128 chars, 3/4 complexity categories
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return NextResponse.json({ error: passwordValidation.errors.join('. ') }, { status: 400 });
     }
 
     const existing = getUserByEmail(email);
     if (existing) {
-      return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
+      // Return generic success-like message to prevent user enumeration.
+      // Attackers must not be able to determine whether an email is registered.
+      logger.info(`[API /api/auth/register] Duplicate registration attempt for: ${email}`);
+      return NextResponse.json(
+        { message: 'If this email is not already registered, an account will be created.' },
+        { status: 200 }
+      );
     }
 
     const passwordHash = await hashPassword(password);

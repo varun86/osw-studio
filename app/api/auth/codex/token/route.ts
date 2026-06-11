@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { CODEX_COOKIE_NAME, codexCookieOptions } from '../cookie';
 
-const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+/**
+ * Get the Codex OAuth client ID from environment variable with fallback.
+ */
+function getCodexClientId(): string {
+  return process.env.CODEX_CLIENT_ID || 'app_EMoamEEZ73f0CkXaXp7hrann';
+}
 
 /**
  * Refreshes the Codex access token using the refresh_token stored in the
@@ -20,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     const formBody = new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: CLIENT_ID,
+      client_id: getCodexClientId(),
       refresh_token: refreshToken,
     });
 

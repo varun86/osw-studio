@@ -4,6 +4,17 @@ import { getProvider, getDefaultModel } from '@/lib/llm/providers/registry';
 import { LLMMessage, ToolDefinition, ContentBlock, TextContentBlock, ImageContentBlock, ReasoningDetail } from '@/lib/llm/types';
 import { logger } from '@/lib/utils';
 import { handleCodexGeneration } from '@/lib/llm/codex-adapter';
+import { requireAuth } from '@/lib/auth/session';
+import { getApiKey as getServerApiKey, isServerKeyStorageAvailable } from '@/lib/auth/api-key-store';
+import { RateLimiter } from '@/lib/analytics/rate-limiter';
+
+// Per-user rate limiter for AI generation endpoints
+// Prevents abuse: 20 requests per user per minute
+const generateRateLimiter = new RateLimiter();
+const GENERATE_RATE_LIMIT = {
+  limit: 20,
+  windowMs: 60 * 1000, // 1 minute
+};
 
 // Helper to extract text content from string or ContentBlock[]
 function getTextContent(content: string | ContentBlock[]): string {
@@ -153,6 +164,27 @@ function extractOllamaImages(messages: LLMMessage[]): { processedMessages: LLMMe
 }
 
 export async function POST(request: NextRequest) {
+  // Require authentication — AI generation is an authenticated-only feature
+  let session;
+  try {
+    session = await requireAuth();
+  } catch {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Per-user rate limiting to prevent abuse
+  const userId = session.userId;
+  if (!generateRateLimiter.check(userId, GENERATE_RATE_LIMIT)) {
+    const resetTime = generateRateLimiter.getResetTime(userId, GENERATE_RATE_LIMIT);
+    return NextResponse.json(
+      { error: 'Rate limit exceeded. Please wait before making more requests.' },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(resetTime) },
+      }
+    );
+  }
+
   try {
     const { prompt, apiKey: clientApiKey, model, tools, context, messages, tool_choice, provider, max_tokens, reasoning, stream: requestStream } = await request.json();
 
@@ -160,6 +192,18 @@ export async function POST(request: NextRequest) {
     const providerConfig = getProvider(selectedProvider);
 
     let apiKey = clientApiKey;
+
+    // If no client-provided API key, try to fetch from server-side encrypted store
+    if (!apiKey && isServerKeyStorageAvailable()) {
+      try {
+        const serverKey = getServerApiKey(session.userId, selectedProvider);
+        if (serverKey) {
+          apiKey = serverKey;
+        }
+      } catch (err) {
+        logger.warn('[API/generate] Failed to retrieve server-side API key:', err);
+      }
+    }
 
     if (!prompt && !messages) {
       return NextResponse.json(

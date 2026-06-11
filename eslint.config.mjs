@@ -19,7 +19,13 @@ const eslintConfig = [
         "varsIgnorePattern": "^_"
       }],
       // Warn on console usage; allow error/warn
-      "no-console": ["warn", { allow: ["error", "warn"] }]
+      "no-console": ["warn", { allow: ["error", "warn"] }],
+
+      // Security rules — prevent code injection patterns
+      "no-eval": "error",
+      "no-implied-eval": "error",
+      "no-new-func": "error",
+      "no-with": "error",
     }
   }
 ];

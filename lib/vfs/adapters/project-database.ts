@@ -14,6 +14,7 @@ import {
   getProjectDatabaseConnection,
   closeProjectDatabase,
 } from './sqlite-connection';
+import { validateProjectSQL, splitSQLStatements, MAX_RESULT_ROWS } from '@/lib/db/sql-validator';
 
 /**
  * Escape a table name for use in SQL identifiers (double-quote escaping)
@@ -52,17 +53,30 @@ export class ProjectDatabase {
 
   /**
    * Execute DDL statements (CREATE TABLE, etc.)
+   * SECURITY (Step 53): Splits SQL into individual statements, validates each
+   * independently, then executes each validated statement individually.
+   * This prevents the validator and SQLite from disagreeing on statement
+   * boundaries when the original concatenated SQL is passed to exec().
    */
-  private static readonly BLOCKED_PATTERNS = /^\s*(ATTACH|DETACH|PRAGMA|VACUUM)\b/i;
-
   executeDDL(sql: string): void {
-    const statements = sql.split(';').filter(s => s.trim());
-    for (const stmt of statements) {
-      if (ProjectDatabase.BLOCKED_PATTERNS.test(stmt.trim())) {
-        throw new Error('Statement type not allowed');
-      }
+    const statements = splitSQLStatements(sql);
+    if (statements.length === 0) {
+      throw new Error('ProjectDB.executeDDL: Empty SQL query');
     }
-    this.db.exec(sql);
+
+    const validatedStatements: string[] = [];
+    for (const stmt of statements) {
+      const validation = validateProjectSQL(stmt, { allowDDL: true, context: 'ProjectDB.executeDDL' });
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+      validatedStatements.push(stmt);
+    }
+
+    // Execute each validated statement individually, NOT the original concatenated SQL
+    for (const stmt of validatedStatements) {
+      this.db.exec(stmt);
+    }
   }
 
   /**
@@ -105,18 +119,20 @@ export class ProjectDatabase {
 
   /**
    * Execute raw SQL (SELECT or DML)
+   * Validates through centralized SQL validator before execution.
    */
   executeRawSQL(sql: string, params?: unknown[]): {
     columns: string[];
     rows: unknown[][];
     rowsAffected: number;
   } {
-    if (ProjectDatabase.BLOCKED_PATTERNS.test(sql)) {
-      throw new Error('Statement type not allowed');
+    const validation = validateProjectSQL(sql, { context: 'ProjectDB.executeRawSQL' });
+    if (!validation.valid) {
+      throw new Error(validation.error);
     }
 
     const trimmedSql = sql.trim().toLowerCase();
-    const isSelect = trimmedSql.startsWith('select');
+    const isSelect = validation.statementType === 'SELECT';
 
     if (isSelect) {
       const stmt = this.db.prepare(sql);
@@ -126,8 +142,10 @@ export class ProjectDatabase {
         return { columns: [], rows: [], rowsAffected: 0 };
       }
 
+      // Enforce row limit
+      const limitedRows = (rows as unknown[]).slice(0, MAX_RESULT_ROWS);
       const columns = Object.keys(rows[0] as Record<string, unknown>);
-      const rowsArray = rows.map(row => columns.map(col => (row as Record<string, unknown>)[col]));
+      const rowsArray = limitedRows.map(row => columns.map(col => (row as Record<string, unknown>)[col]));
 
       return { columns, rows: rowsArray, rowsAffected: 0 };
     } else {

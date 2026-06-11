@@ -12,8 +12,27 @@ import { getUserByEmail, getUserDefaultWorkspace, getWorkspaceById, getUserCount
 import { ensureDefaultWorkspace } from '@/lib/auth/default-workspace';
 import { verifyPassword } from '@/lib/auth/passwords';
 import { logger } from '@/lib/utils';
+import { RateLimiter, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+// Rate limiting: 5 attempts per email per 15 min, 20 per IP per 15 min
+const emailRateLimiter = new RateLimiter();
+const ipRateLimiter = new RateLimiter();
+const LOGIN_RATE_LIMITS = {
+  email: { limit: 5, windowMs: 15 * 60 * 1000 },   // 5 per email per 15 min
+  ip: { limit: 20, windowMs: 15 * 60 * 1000 },      // 20 per IP per 15 min
+};
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check — before any authentication logic
+  const clientIp = getIdentifier(request);
+  if (!ipRateLimiter.check(clientIp, LOGIN_RATE_LIMITS.ip)) {
+    const resetTime = ipRateLimiter.getResetTime(clientIp, LOGIN_RATE_LIMITS.ip);
+    return NextResponse.json(
+      { error: 'Too many login attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(resetTime) } }
+    );
+  }
+
   try {
     const body = await request.json();
     const { email, password } = body;
@@ -24,6 +43,15 @@ export async function POST(request: NextRequest) {
 
     // If email provided, authenticate against system database
     if (email) {
+      // Per-email rate limiting
+      if (!emailRateLimiter.check(email.toLowerCase().trim(), LOGIN_RATE_LIMITS.email)) {
+        const resetTime = emailRateLimiter.getResetTime(email.toLowerCase().trim(), LOGIN_RATE_LIMITS.email);
+        return NextResponse.json(
+          { error: 'Too many login attempts for this email. Please try again later.' },
+          { status: 429, headers: { 'Retry-After': String(resetTime) } }
+        );
+      }
+
       const user = getUserByEmail(email);
       if (!user) {
         return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });

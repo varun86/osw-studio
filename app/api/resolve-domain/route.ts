@@ -19,10 +19,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeploymentByDomain, getDeploymentBySlug, getAllDomainRoutes } from '@/lib/auth/system-database';
+import { requireAdmin } from '@/lib/auth/session';
 
 export async function GET(request: NextRequest) {
   // Bulk list mode — for Caddy config generation
+  // This exposes all domain routes, so it requires admin authentication
   if (request.nextUrl.searchParams.get('list') === 'true') {
+    try {
+      await requireAdmin();
+    } catch {
+      return NextResponse.json({ error: 'Admin authentication required' }, { status: 401 });
+    }
+
     const routes = getAllDomainRoutes();
     return NextResponse.json({
       domains: routes.map(r => ({

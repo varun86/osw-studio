@@ -1,3 +1,45 @@
+/**
+ * Webhook Delivery System
+ *
+ * Outbound webhook delivery with HMAC-SHA256 signature verification.
+ *
+ * SECURITY (Step 42): Webhook Signature Verification Documentation
+ * ================================================================
+ * Consumers of OSW Studio webhooks MUST verify the signature to ensure
+ * payload authenticity and integrity. The verification algorithm is:
+ *
+ * 1. Algorithm: HMAC-SHA256
+ * 2. Header: x-webhook-signature
+ * 3. Secret: The same WEBHOOK_SECRET environment variable configured on this server
+ * 4. Verification steps:
+ *    a. Read the raw request body as a string (do NOT parse JSON first)
+ *    b. Compute: HMAC-SHA256(raw_body, WEBHOOK_SECRET) as hex digest
+ *    c. Compare the result with the value of the x-webhook-signature header
+ *    d. Use constant-time comparison to prevent timing attacks
+ *
+ * Example (Node.js):
+ *   const crypto = require('crypto');
+ *   const expected = crypto.createHmac('sha256', WEBHOOK_SECRET)
+ *     .update(rawBody).digest('hex');
+ *   if (crypto.timingSafeEqual(
+ *     Buffer.from(expected, 'hex'),
+ *     Buffer.from(signature, 'hex')
+ *   )) { /* verified *\/ }
+ *
+ * Example (Python):
+ *   import hmac, hashlib
+ *   expected = hmac.new(WEBHOOK_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
+ *   if hmac.compare_digest(expected, signature):  # verified
+ *
+ * Payload format (JSON):
+ *   { "event_type": string, "payload": object, "timestamp": string }
+ *
+ * Headers:
+ *   Content-Type: application/json
+ *   x-instance-id: The OSW Studio instance identifier
+ *   x-webhook-signature: HMAC-SHA256 hex digest of the raw body
+ */
+
 import { createHmac } from 'crypto';
 import { getPendingEvents, markDelivered, markFailed, pruneDelivered, isWebhookEnabled } from './outbox';
 import { logger } from '@/lib/utils';

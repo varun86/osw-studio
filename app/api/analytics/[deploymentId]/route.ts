@@ -5,8 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getSQLiteAdapter } from '@/lib/vfs/adapters/server';
-import { getSession } from '@/lib/auth/session';
-import { getDeploymentWorkspace, getWorkspaceAccess } from '@/lib/auth/system-database';
+import { requireDeploymentAccess } from '@/lib/auth/deployment-access';
 
 export interface AnalyticsStats {
   totalPageviews: number;
@@ -24,17 +23,9 @@ export async function GET(
   try {
     const { deploymentId } = await params;
 
-    // Auth check: verify session has access to the workspace that owns this deployment
-    const session = await getSession();
-    if (session && session.userId !== 'admin' && session.userId !== 'desktop') {
-      const workspaceId = getDeploymentWorkspace(deploymentId);
-      if (workspaceId) {
-        const access = getWorkspaceAccess(session.userId, workspaceId);
-        if (!access) {
-          return NextResponse.json({ error: 'Not found' }, { status: 404 });
-        }
-      }
-    }
+    // Auth + workspace access check: verify session has access to the deployment
+    const accessResult = await requireDeploymentAccess(deploymentId);
+    if (accessResult instanceof NextResponse) return accessResult;
 
     // Get date range from query params (default: last 30 days)
     const searchParams = request.nextUrl.searchParams;

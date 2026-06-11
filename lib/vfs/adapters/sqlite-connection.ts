@@ -14,6 +14,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { applyEncryptionKey } from '@/lib/auth/db-crypto';
 
 // Connection caches
 const coreDatabases = new Map<string, Database.Database>();
@@ -72,12 +73,13 @@ function validateIdFormat(id: string, label: string): void {
 
 /**
  * Configure a database with WAL mode and foreign keys
+ * @security Uses applyEncryptionKey() for safe PRAGMA key application
  */
 function configureDatabase(db: Database.Database): void {
-  const encryptionKey = process.env.DB_ENCRYPTION_KEY;
-  if (encryptionKey) {
-    db.pragma(`key='${encryptionKey}'`);
-  }
+  // SECURITY: Apply encryption key with validation to prevent SQL injection
+  // Previously: db.pragma(`key='${encryptionKey}'`) — allowed SQL injection
+  // Now: applyEncryptionKey() validates key contains only [a-fA-F0-9+/=] before use
+  applyEncryptionKey(db, process.env.DB_ENCRYPTION_KEY, 'DB_ENCRYPTION_KEY');
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');

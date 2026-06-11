@@ -2,17 +2,36 @@
  * Workspace-Scoped Project Database Query API
  *
  * POST - Execute SQL query against project database
+ *
+ * Security: Uses centralized SQL validator to block:
+ * - ATTACH/DETACH/PRAGMA/VACUUM/REINDEX statements
+ * - Overly long SQL queries (resource exhaustion)
+ * - DDL is allowed (project DBs are user-owned) but validated
+ * - Result row limits enforced
  */
 
 import { logger } from '@/lib/utils';
 import { NextRequest, NextResponse } from 'next/server';
 import { getWorkspaceContext } from '@/lib/api/workspace-context';
+import { validateProjectSQL, MAX_RESULT_ROWS } from '@/lib/db/sql-validator';
+import { sanitizeDbError, logDbError } from '@/lib/db/sanitize-error';
+import { databaseQueryRateLimiter, RATE_LIMIT_CONFIG, getIdentifier } from '@/lib/analytics/rate-limiter';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ workspaceId: string; id: string }> }
 ): Promise<NextResponse> {
   try {
+    // Rate limiting — 20 requests per minute per user
+    const identifier = getIdentifier(request);
+    if (!databaseQueryRateLimiter.check(identifier, RATE_LIMIT_CONFIG.databaseQuery)) {
+      const retryAfter = databaseQueryRateLimiter.getResetTime(identifier, RATE_LIMIT_CONFIG.databaseQuery);
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+      );
+    }
+
     const { adapter } = await getWorkspaceContext(params);
     const { id: projectId } = await params;
     const body = await request.json();
@@ -22,19 +41,18 @@ export async function POST(
       return NextResponse.json({ error: 'SQL query is required' }, { status: 400 });
     }
 
+    // Validate SQL through centralized validator
+    // Project DBs have no system tables but still block dangerous statements
+    const validation = validateProjectSQL(sql, { context: 'ProjectDBQuery' });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
     const projectDb = adapter.getProjectDatabase(projectId);
 
     try {
-      const trimmedUpper = sql.trim().toUpperCase();
-
-      // Block dangerous statements
-      const BLOCKED = ['ATTACH', 'DETACH', 'PRAGMA', 'VACUUM'];
-      if (BLOCKED.some(kw => trimmedUpper.startsWith(kw))) {
-        return NextResponse.json({ error: `${trimmedUpper.split(/\s/)[0]} statements are not allowed` }, { status: 400 });
-      }
-
-      // DDL
-      if (trimmedUpper.startsWith('CREATE') || trimmedUpper.startsWith('ALTER') || trimmedUpper.startsWith('DROP')) {
+      // Route DDL and DML/SELECT to appropriate methods
+      if (validation.statementType === 'DDL') {
         projectDb.executeDDL(sql);
         return NextResponse.json({
           success: true,
@@ -45,14 +63,21 @@ export async function POST(
       }
 
       const result = projectDb.executeRawSQL(sql);
+
+      // Enforce row limit
+      const limitedRows = result.rows.slice(0, MAX_RESULT_ROWS);
+      const truncated = result.rows.length > MAX_RESULT_ROWS;
+
       return NextResponse.json({
         success: true,
         columns: result.columns,
-        rows: result.rows,
+        rows: limitedRows,
         rowsAffected: result.rowsAffected,
+        ...(truncated ? { warning: `Result truncated to ${MAX_RESULT_ROWS} rows (total: ${result.rows.length})` } : {}),
       });
     } catch (sqlError) {
-      const message = sqlError instanceof Error ? sqlError.message : 'Query failed';
+      logDbError('ProjectDBQuery', sqlError, sql);
+      const message = sanitizeDbError(sqlError);
       return NextResponse.json({ error: message }, { status: 400 });
     }
   } catch (error) {

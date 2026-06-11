@@ -4,9 +4,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, verifyInstanceApiKey } from '@/lib/auth/session';
+import { requireAdmin, verifyInstanceApiKey } from '@/lib/auth/session';
 import { listUsers, listUserWorkspaces, createUser, getUserByEmail, createWorkspace, setDefaultWorkspace } from '@/lib/auth/system-database';
 import { hashPassword } from '@/lib/auth/passwords';
+import { validatePassword } from '@/lib/auth/password-policy';
+import { internalErrorResponse } from '@/lib/security/error-response';
+import { adminRateLimiter, RATE_LIMIT_CONFIG, getIdentifier } from '@/lib/analytics/rate-limiter';
+
+/** SECURITY (Step 51): Rate limit check for admin user routes */
+function checkRateLimit(request: NextRequest): NextResponse | null {
+  const identifier = getIdentifier(request);
+  if (!adminRateLimiter.check(identifier, RATE_LIMIT_CONFIG.admin)) {
+    const retryAfter = adminRateLimiter.getResetTime(identifier, RATE_LIMIT_CONFIG.admin);
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } }
+    );
+  }
+  return null;
+}
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
@@ -78,12 +94,12 @@ function getUserStorageMb(userId: string): number {
 }
 
 export async function GET(request: NextRequest) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const users = listUsers();
 
@@ -110,23 +126,29 @@ export async function GET(request: NextRequest) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to list users' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimitResponse = checkRateLimit(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
   try {
     const apiSession = verifyInstanceApiKey(request);
-    const session = apiSession || await requireAuth();
-    if (!session.isAdmin) {
-      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-    }
+    const session = apiSession || await requireAdmin();
 
     const body = await request.json();
     const { email, password, displayName, workspaceAssignment, workspaceId: assignWorkspaceId, isAdmin: makeAdmin } = body;
 
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
+    }
+
+    // Enforce password policy for admin-created users too
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.valid) {
+      return NextResponse.json({ error: passwordValidation.errors.join('. ') }, { status: 400 });
     }
 
     // Check for existing user
@@ -165,6 +187,6 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
+    return NextResponse.json(...internalErrorResponse(error));
   }
 }
